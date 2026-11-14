@@ -113,3 +113,67 @@ describe('Surfacing Output', () => {
         );
     });
 });
+
+// GGSender: start height and ramp angle are dialog fields
+describe('GGSender: surfacing start height and ramp angle', () => {
+    const base = defaultState.widgets.surfacing;
+    const generate = (overrides = {}) =>
+        new Generator({
+            surfacing: { ...base, ...overrides },
+            units: METRIC_UNITS,
+        }).generate({ returnArray: true }) as string[];
+
+    const rampLine = (gcode: string[]) => {
+        const i = gcode.indexOf('(Ramping into Material)');
+        return gcode[i + 2];
+    };
+
+    it('matches upstream output at the default values', () => {
+        const upstream = generate({ safeHeight: undefined, rampAngle: undefined });
+        expect(generate()).toEqual(upstream);
+        expect(upstream).toContain('G0 Z3');
+    });
+
+    it('starts from the requested height', () => {
+        const gcode = generate({ safeHeight: 1 });
+        expect(gcode).toContain('G0 Z1');
+        expect(gcode).not.toContain('G0 Z3');
+        // ramp goes from the start height down to the cut depth (1mm skim)
+        expect(rampLine(gcode)).toMatch(/Z-2$/);
+    });
+
+    it('accepts a start height of zero', () => {
+        const gcode = generate({ safeHeight: 0 });
+        expect(gcode).toContain('G0 Z0');
+        expect(rampLine(gcode)).toMatch(/Z-1$/);
+    });
+
+    it('never moves above the requested height', () => {
+        const gcode = generate({ safeHeight: 0.5, skimDepth: 1, maxDepth: 3 });
+        const absoluteZ = gcode
+            .filter((l) => /^G0 Z/.test(l))
+            .map((l) => Number(l.match(/^G0 Z(-?[\d.]+)/)[1]));
+        expect(absoluteZ.length).toBeGreaterThan(0);
+        expect(Math.max(...absoluteZ)).toBeLessThanOrEqual(0.5);
+    });
+
+    it('ignores a negative or unusable start height', () => {
+        expect(generate({ safeHeight: -2 })).toContain('G0 Z3');
+        expect(generate({ safeHeight: 'abc' })).toContain('G0 Z3');
+    });
+
+    it('shortens the ramp at a steeper angle', () => {
+        const length = (gcode: string[]) =>
+            Math.abs(Number(rampLine(gcode).match(/G1 [XY](-?[\d.]+)/)[1]));
+        const shallow = length(generate({ rampAngle: 10 }));
+        const steep = length(generate({ rampAngle: 45 }));
+        // (1 skim + 3 start + 1 extra) / tan(45deg) = 5
+        expect(steep).toBeCloseTo(5, 2);
+        expect(shallow).toBeGreaterThan(steep);
+    });
+
+    it('falls back to 10 degrees for an unusable angle', () => {
+        expect(generate({ rampAngle: 0 })).toEqual(generate({ rampAngle: 10 }));
+        expect(generate({ rampAngle: 95 })).toEqual(generate({ rampAngle: 10 }));
+    });
+});

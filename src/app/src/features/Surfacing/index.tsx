@@ -62,6 +62,7 @@ const SurfacingTool = () => {
                 width: convertToImperial(surfacing.width),
                 skimDepth: convertToImperial(surfacing.skimDepth),
                 maxDepth: convertToImperial(surfacing.maxDepth),
+                safeHeight: convertToImperial(surfacing.safeHeight ?? 3),
             };
         }
         return surfacing;
@@ -84,6 +85,7 @@ const SurfacingTool = () => {
                     width: convertToMetric(surfacing.width),
                     skimDepth: convertToMetric(surfacing.skimDepth),
                     maxDepth: convertToMetric(surfacing.maxDepth),
+                    safeHeight: convertToMetric(surfacing.safeHeight ?? 0.12),
                 });
             } else {
                 surfacingConfig.set('', surfacing);
@@ -137,6 +139,9 @@ const SurfacingTool = () => {
                   width: convertToImperial(defaultSurfacingState.width),
                   skimDepth: convertToImperial(defaultSurfacingState.skimDepth),
                   maxDepth: convertToImperial(defaultSurfacingState.maxDepth),
+                  safeHeight: convertToImperial(
+                      defaultSurfacingState.safeHeight,
+                  ),
               };
     const xyMin = units === IMPERIAL_UNITS ? convertToImperial(1) : 1;
 
@@ -274,6 +279,62 @@ const SurfacingTool = () => {
                                     {surfacing.maxDepth} {units})
                                 </p>
                             )}
+                        </InputArea>
+                        {/* GGSender: start height and ramp angle, hard-coded upstream */}
+                        <InputArea label="Start Height & Ramp">
+                            <div className="grid grid-cols-[3fr_10px_3fr] gap-x-2 gap-y-1 col-span-3">
+                                <Tooltip
+                                    content={`Height above Z0 the tool starts, ramps in from and travels at. Default is ${convertedDefaultSurfacingState.safeHeight} ${units}`}
+                                >
+                                    <ControlledInput
+                                        type="number"
+                                        id="safeHeight"
+                                        suffix={units}
+                                        min={0}
+                                        max={10000}
+                                        className={cx('rounded', inputStyle)}
+                                        wrapperClassName="w-full"
+                                        value={
+                                            surfacing.safeHeight ??
+                                            convertedDefaultSurfacingState.safeHeight
+                                        }
+                                        immediateOnChange
+                                        onChange={(e) =>
+                                            onChange(
+                                                'safeHeight',
+                                                Number(e.target.value),
+                                            )
+                                        }
+                                    />
+                                </Tooltip>
+                                <span className="flex justify-center items-center">
+                                    &
+                                </span>
+                                <Tooltip
+                                    content={`Ramp-in angle. Default is ${defaultSurfacingState.rampAngle} deg`}
+                                >
+                                    <ControlledInput
+                                        type="number"
+                                        id="rampAngle"
+                                        suffix="deg"
+                                        min={1}
+                                        max={89}
+                                        className={inputStyle}
+                                        wrapperClassName="w-full"
+                                        value={
+                                            surfacing.rampAngle ??
+                                            defaultSurfacingState.rampAngle
+                                        }
+                                        immediateOnChange
+                                        onChange={(e) =>
+                                            onChange(
+                                                'rampAngle',
+                                                Number(e.target.value),
+                                            )
+                                        }
+                                    />
+                                </Tooltip>
+                            </div>
                         </InputArea>
                         <InputArea label="Bit Diameter">
                             <Tooltip
