@@ -23,6 +23,10 @@
 import { getProbeSettings, getToolString } from 'app/lib/toolChangeUtils';
 import { store as reduxStore } from 'app/store/redux';
 import get from 'lodash/get';
+import {
+    getToolChangeSafeZ,
+    shouldReturnToStartZ,
+} from 'app/lib/gg/toolChangeMoves';
 
 const getMoveAmount = () => {
     const $13 = get(
@@ -109,6 +113,7 @@ const createWizard = (count: number) => {
                 '%global.toolchange.XPOS=posx',
                 '%global.toolchange.YPOS=posy',
                 '%global.toolchange.ZPOS=posz',
+                `%global.toolchange.Z_SAFE_HEIGHT=${getToolChangeSafeZ()}`,
                 '%global.toolchange.UNITS=modal.units',
                 '%global.toolchange.SPINDLE=modal.spindle',
                 '%global.toolchange.DISTANCE=modal.distance',
@@ -197,9 +202,22 @@ const createWizard = (count: number) => {
                                 label: 'Resume Cutting',
                                 gcodeLines: [
                                     '(Returning to initial position)',
-                                    'G21 G91 G0 Z10',
+                                    // GGSender: upstream lifts 10mm and then
+                                    // returns to the stored Z; otherwise go
+                                    // to the safe height and stay there.
+                                    ...(shouldReturnToStartZ()
+                                        ? ['G21 G91 G0 Z10']
+                                        : [
+                                              'G53 G21 G0 Z[global.toolchange.Z_SAFE_HEIGHT]',
+                                          ]),
                                     'G90 [global.toolchange.UNITS] G0 X[global.toolchange.XPOS] Y[global.toolchange.YPOS]',
-                                    'G90 [global.toolchange.UNITS] G0 Z[global.toolchange.ZPOS]',
+                                    ...(shouldReturnToStartZ()
+                                        ? [
+                                              'G90 [global.toolchange.UNITS] G0 Z[global.toolchange.ZPOS]',
+                                          ]
+                                        : [
+                                              '(Z stays at tool change safe height)',
+                                          ]),
                                     '(Restore initial modals)',
                                     '[global.toolchange.SPINDLE] [global.toolchange.UNITS] [global.toolchange.DISTANCE] [global.toolchange.FEEDRATE]',
                                     '%toolchange_complete',
