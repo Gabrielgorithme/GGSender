@@ -56,6 +56,10 @@ export interface Workspace {
         passthrough: boolean;
         skipDialog: boolean;
         moveToManualPosition: boolean;
+        // GGSender additions
+        safeZ: number;
+        returnToStartZ: boolean;
+        sendToolNumber: boolean;
         manualPosition: BasicPosition;
         firstToolBehaviour: FirstToolBehavior;
     };

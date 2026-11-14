@@ -77,6 +77,10 @@ const defaultState: State = {
             passthrough: false,
             skipDialog: false,
             moveToManualPosition: false,
+            // GGSender additions
+            safeZ: -0.1,
+            returnToStartZ: false,
+            sendToolNumber: false,
             firstToolBehaviour: 'Always run full wizard',
             manualPosition: {
                 x: 0,
@@ -393,6 +397,9 @@ const defaultState: State = {
             shouldDwell: false,
             flood: false,
             mist: false,
+            // GGSender additions (upstream hard-codes 3mm and 10 degrees)
+            safeHeight: 3,
+            rampAngle: 10,
         },
         visualizer: {
             minimized: false,
