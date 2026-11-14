@@ -44,6 +44,8 @@ import WinReg from 'winreg';
 import WindowManager from './electron-app/WindowManager';
 import launchServer from './server-cli';
 import pkg from './package.json';
+// GGSender: build label and switches for this fork
+import ggBuild from './app/src/gg-build.json';
 import { parseAndReturnGCode } from './electron-app/RecentFiles';
 import { asyncCallWithTimeout } from './electron-app/AsyncTimeout';
 import { getGRBLLog } from './electron-app/grblLogs';
@@ -74,7 +76,8 @@ const externalRendererUrl = process.env.NODE_ENV === 'development'
     ? process.env.ELECTRON_RENDERER_URL
     : '';
 
-if (process.env.NODE_ENV === 'production') {
+// GGSender: no crash reports to Sienci from a modified build
+if (process.env.NODE_ENV === 'production' && ggBuild.crashReporting) {
     Sentry.init({
         dsn: 'https://eeb4899f0415aa6bc9de477a7faeb720@o558751.ingest.us.sentry.io/4509479105986560',
         release: pkg.version,
@@ -282,7 +285,7 @@ const main = () => {
             };
             const options = {
                 ...bounds,
-                title: `gSender ${pkg.version}`,
+                title: `${ggBuild.name} ${ggBuild.version} (gSender ${pkg.version})`,
                 kiosk,
             };
             const window = await windowManager.openWindow(url, options, splashScreen);
@@ -579,7 +582,8 @@ const main = () => {
             });
         }
         //Check for available updates at end to avoid try-catch failing to load events
-        if (process.platform === 'win32') {
+        // GGSender: off by default, an official update would replace this build
+        if (process.platform === 'win32' && ggBuild.updateCheck) {
             const internetConnectivity = await isOnline();
             if (internetConnectivity) {
                 autoUpdater.autoDownload = false; // We don't want to force update but will prompt until it is updated
