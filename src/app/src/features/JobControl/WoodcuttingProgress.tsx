@@ -1,10 +1,9 @@
-import { useRef } from 'react';
-
-import SpinningDrill from './assets/loading-spinning-bit.gif';
-import SpinningDrillPaused from './assets/loading-spinning-bit-paused.gif';
-import WoodBlockBefore from './assets/loading-wood-block-lines.png';
-import WoodBlockAfter from './assets/loading-wood-dust-pile.gif';
-
+/*
+ * GGSender: upstream draws a router bit cutting through a block of wood here.
+ * Replaced by a plain progress bar (the percentage is already shown above it
+ * by ProgressArea). The component keeps its name and props so
+ * the two places that use it (job progress, SD card progress) are untouched.
+ */
 type WoodcuttingProgressProps = {
     percentage: number;
     isPaused?: boolean;
@@ -14,42 +13,27 @@ const WoodcuttingProgress = ({
     percentage,
     isPaused = false,
 }: WoodcuttingProgressProps) => {
-    const drillImageRef = useRef<HTMLImageElement>(null);
-
-    // Use static SVG when paused, animated GIF when running
-    const currentDrillSrc = isPaused ? SpinningDrillPaused : SpinningDrill;
+    const value = Number.isFinite(Number(percentage))
+        ? Math.min(100, Math.max(0, Number(percentage)))
+        : 0;
 
     return (
-        <div className="relative w-full h-12">
-            {/* Wood pieces and dust that is shown as drill progresses */}
+        <div className="relative w-full h-12 flex items-center">
             <div
-                className={`absolute inset-0 w-full bg-contain bg-bottom bg-repeat-x mt-auto brightness-[0.8]`}
-                style={{
-                    backgroundImage: `url(${WoodBlockAfter})`,
-                }}
-            />
-
-            {/* Wood block that gets hidden as drill progresses */}
-            <div
-                className="absolute z-10 inset-0 w-full bg-cover bg-center mt-auto h-8 brightness-[0.8]"
-                style={{
-                    backgroundImage: `url(${WoodBlockBefore})`,
-                    clipPath: `polygon(${Math.min(100, Math.max(0, percentage))}% 0%, 100% 0%, 100% 100%, ${Math.min(100, Math.max(0, percentage))}% 100%)`,
-                    transition: 'clip-path 0.2s ease-out',
-                }}
-            />
-
-            <img
-                src={currentDrillSrc}
-                alt="Spinning Drill"
-                className="absolute top-1/2 w-8 h-auto transition-all duration-100 -translate-y-1/2 z-10 brightness-[0.8]"
-                style={{
-                    left: `calc(${percentage}% - ${drillImageRef.current?.offsetWidth}px + 6px)`,
-                    // opacity: isPaused ? 0.7 : 1,
-                    transition: 'opacity 0.3s ease',
-                }}
-                ref={drillImageRef}
-            />
+                className="relative w-full h-5 rounded-md overflow-hidden bg-gray-200 dark:bg-dark-darker ring-1 ring-gray-300 dark:ring-gray-600"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(value)}
+            >
+                <div
+                    className={`h-full ${isPaused ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    style={{
+                        width: `${value}%`,
+                        transition: 'width 0.2s ease-out',
+                    }}
+                />
+            </div>
         </div>
     );
 };
