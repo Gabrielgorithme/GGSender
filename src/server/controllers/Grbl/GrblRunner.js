@@ -43,6 +43,9 @@ import {
 const log = logger('controller:Grbl');
 
 class GrblRunner extends events.EventEmitter {
+    // GGSender: set by the controller while T words are being withheld
+    ggTrackTool = false;
+
     state = {
         status: {
             activeState: '',
@@ -180,7 +183,15 @@ class GrblRunner extends events.EventEmitter {
             const { modal, tool, feedrate, spindle } = payload;
             const { tool: curTool } = this.state.parserstate.modal;
 
-            if (tool !== '0' && tool !== 0) {
+            // GGSender: when T words are withheld from the firmware
+            // (ggTrackTool), its reported tool is stale or zero, so the tool
+            // gSender recorded at the last tool change wins.
+            const hasTrackedTool = this.ggTrackTool &&
+                curTool !== undefined && curTool !== null &&
+                curTool !== '' && curTool !== '0' && curTool !== 0;
+            if (hasTrackedTool) {
+                modal.tool = curTool;
+            } else if (tool !== '0' && tool !== 0) {
                 modal.tool = tool;
             } else {
                 modal.tool = curTool;

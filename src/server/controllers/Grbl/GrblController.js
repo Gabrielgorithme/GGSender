@@ -91,6 +91,11 @@ import {
 } from "../../lib/homing";
 import { calcOverrides } from "../runOverride";
 import {
+	findToolNumber,
+	shouldStripToolWord,
+	stripToolWord,
+} from "../../lib/gg/toolWord";
+import {
 	GCODE_TRANSLATION_TYPE,
 	translateGcode,
 } from "../../lib/gcode-translation";
@@ -397,6 +402,10 @@ class GrblController {
 					if (!passthroughM6) {
 						line = line.replace(/M0*6(?!\d)/i, "(M6)");
 					}
+					// GGSender: same rule as the sender, for M6 lines only
+					if (shouldStripToolWord(this.toolChangeContext)) {
+						line = stripToolWord(line);
+					}
 				}
 
 				const useAaxisForGrbl = store.get("preferences.useAaxisForGrbl", false);
@@ -556,14 +565,31 @@ class GrblController {
 					// No toolchange in check mode
 					const currentState = _.get(this.state, "status.activeState", "");
 					if (currentState === "Check") {
-						return line.replace(/M0*6(?!\d)/i, "(M6)");
+						// GGSender: check mode parses T words too
+						const checked = line.replace(/M0*6(?!\d)/i, "(M6)");
+						return shouldStripToolWord(this.toolChangeContext)
+							? stripToolWord(checked)
+							: checked;
 					}
 
 					const { toolChangeOption } = this.toolChangeContext;
 
 					let tool = line.match(toolCommand);
-					const toolLabel = tool?.[0] || null;
-					const toolNumber = tool?.[2] || null;
+					// GGSender: a T word on an earlier line of its own counts too
+					const toolNumber = tool?.[2] || this.ggPendingTool || null;
+					const toolLabel = tool?.[0] || (toolNumber ? `T${toolNumber}` : null);
+					this.ggPendingTool = null;
+
+					// GGSender: the Ignore and Code strategies never record the
+					// tool below; without the T word the firmware cannot report
+					// it either, so record it here.
+					if (
+						toolNumber &&
+						shouldStripToolWord(this.toolChangeContext) &&
+						(toolChangeOption === "Ignore" || toolChangeOption === "Code")
+					) {
+						this.runner.setTool(toolNumber);
+					}
 
 					// Handle specific cases for macro and pause, ignore is default and comments line out with no other action
 					// If toolchange is at very beginning of file, ignore it
@@ -605,6 +631,22 @@ class GrblController {
 						line = line.replace(/M0*6(?!\d)/i, "(M6)");
 					}
 					//line = line.replace(`${tool?.[0]}`, `(${tool?.[0]})`);
+				} else {
+					// GGSender: remember a T word that comes before its M6
+					const pendingTool = findToolNumber(line);
+					if (pendingTool !== null) {
+						this.ggPendingTool = pendingTool;
+					}
+				}
+
+				// GGSender: keep T words away from the firmware when gSender
+				// runs the tool change itself (tool numbers above 255 are
+				// rejected by Grbl-family firmware with error:38).
+				if (shouldStripToolWord(this.toolChangeContext)) {
+					this.runner.ggTrackTool = true;
+					line = stripToolWord(line);
+				} else {
+					this.runner.ggTrackTool = false;
 				}
 
 				const useAaxisForGrbl = store.get("preferences.useAaxisForGrbl", false);
