@@ -51,6 +51,10 @@ export function WorkspaceSelector() {
 
     function onWorkspaceSelect(value: GrblWorkspace) {
         setWorkspace(value);
+        // GGSender: traffic log, to tell a real selection from a stray one
+        controller.ggNote(
+            `workspace dropdown fired: value="${value}" shown="${workspace}" reported="${activeWorkspace}" machine=${activeState} workflow=${workflowState} disabled=${disabled}`,
+        );
         controller.command('gcode', value);
         posthog?.capture('workspace_selected', { workspace: value });
     }

@@ -72,6 +72,9 @@ export default defineConfig({
         include: ['**/*.styl'],
     },
     build: {
+        // GGSender: GG_READABLE_BUILD=1 keeps function names, so stack
+        // traces written to the traffic log can be read without a source map.
+        minify: process.env.GG_READABLE_BUILD ? false : 'esbuild',
         sourcemap: true,
         /*rollupOptions: {
             rollupOptions: {

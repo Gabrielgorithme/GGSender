@@ -7,7 +7,7 @@ This file is the entry point for whoever edits this fork next, human or AI. It c
 changed and why, how to build and install, the traps, and what is still to do.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.1.0**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.2.0-diag**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` holds the current state of the fork. Work on a branch, open a pull request into `gg/main`.
 - Not supported by Sienci Labs. Do not report problems with this build to them.
 
@@ -88,7 +88,63 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
   in it that depends on a setting must be a getter, or it is frozen at start-up.
 - **An official update replaces `app.asar`.** The update check is switched off in this build.
 
+## Traffic log
+
+Everything exchanged with the controller is written to disk as it happens, so it survives a
+disconnect or a crash.
+
+- Folder: `%APPDATA%\gSender\logs` (the same folder as gSender's own `server.log` and `grbl.log`).
+- One file per app start, `traffic-<date>-<time>.log`, split at 20 MB; the 30 newest are kept.
+- `>` sent to the controller, followed by its source (`sender` = the job, `feeder` = an injected
+  command, `immediate` = polls). `<` received. `#` an event inside gSender.
+- Status polls (`?`) are left out. Status reports are kept when the machine state changes and once
+  every 5 seconds.
+
+Events worth searching for:
+
+| Search for | Meaning |
+| --- | --- |
+| `COMMAND DURING JOB` | G-code injected while a job was running, with the call stack that asked for it |
+| `interface: origin of next` | The interface-side call stack of an injected command |
+| `interface: workspace dropdown fired` | The work-coordinate dropdown sent a value |
+| `interface: job:stop received` | The interface is about to re-send the stored coordinate system |
+| `ok credited to` | An "ok" that was not counted for the running job (`$G reply`, `feeder`, `paused job`) |
+| `accounting` | Sender bookkeeping every 5 s during a job: lines sent and acknowledged, buffer use |
+| `STALL` | Job running, sender not holding, machine idle, no reply for 3 s. Followed by a state dump |
+| `workflow:` | start, pause, resume, stop, with what caused a pause or stop |
+
+Code: `src/server/lib/gg/trafficLog.js` (the file), `src/server/lib/gg/streamDiagnostics.js` (the
+events), hooks in `lib/Connection.js`, `GrblController.js`, `CNCEngine.js`, and
+`app/src/lib/controller.ts`. The diagnostics only observe; they do not change what is sent or how
+replies are counted.
+
+Build the interface with `GG_READABLE_BUILD=1 scripts/gg/build.sh` when the stacks matter: the
+bundle is three times larger but the stack traces carry real function names.
+
+## Simulated-board test
+
+`src/server/controllers/Grbl/__tests__/gg-stream-sim.test.js` runs the real Grbl controller against
+a simulated board that answers like Grbl: `ok` per line, a status report per `?`, `[GC:...]` then
+`ok` for `$G`, `error:38` for a tool number above 255. It checks that a job streams to the end and
+that no T word reaches the board. Extend it when changing anything in the stream path.
+
 ## Change log
+
+### 0.2.0-diag (on gSender 1.6.4)
+
+**Traffic log and stream diagnostics.** See the section above. Added to find an intermittent stall
+seen on official 1.6.4 as well as on 0.1.0: the job shows as running, the controller is idle, the
+spindle stays on. A `G54` that is not in the program appears around the stall. Never seen on 1.6.2.
+
+What is known so far:
+- Nothing that changed in the server between 1.6.2 and 1.6.4 writes to the controller.
+- A bare `G54` can only come from the workspace dropdown, the end-of-job restore
+  (`[global.state.workspace]` in `controllerSagas.tsx`), check mode, or start-from-line.
+- The official 1.6.4 build contains a newer dropdown library (Radix Select) than the official
+  1.6.2 build; this fork builds with the locked, older one. The stall was reported on both, so the
+  library alone does not explain it.
+- In the simulation, a `G54` injected mid-job does not stall the stream when the board answers
+  every line.
 
 ### 0.1.0 (on gSender 1.6.4)
 
@@ -137,7 +193,7 @@ Window title and About page show the fork version. The update check does not run
 badge never appears. Sentry crash reporting is off, so a modified build does not send reports to
 Sienci. Switches are in `src/app/src/gg-build.json`.
 
-### Tests added
+### Tests added in 0.1.0
 
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
