@@ -20,3 +20,12 @@ describe('GGSender: override step setting', () => {
         expect(readOverrideStep(key)).toBe(10);
     });
 });
+
+describe('GGSender: spindle override step default', () => {
+    it('is 1% for a new install', () => {
+        // eslint-disable-next-line global-require
+        const defaults = require('app/store/defaultState').default;
+        expect(defaults.workspace.gg.spindleOverrideStep).toBe('1');
+        expect(defaults.workspace.gg.feedOverrideStep).toBe('1');
+    });
+});

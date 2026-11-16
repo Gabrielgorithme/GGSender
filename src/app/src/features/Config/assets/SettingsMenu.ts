@@ -230,9 +230,9 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         key: 'workspace.gg.spindleOverrideStep',
                         type: 'select',
                         options: ['1', '2', '5', '10'],
-                        defaultValue: '10',
+                        defaultValue: '1',
                         description:
-                            'GGSender: size of one step of the spindle override slider and its +/- buttons, in percent. The firmware accepts 1% steps; upstream gSender only offers 10. Takes effect immediately.',
+                            'GGSender: size of one step of the spindle override slider and its +/- buttons, in percent. The firmware accepts 1% steps; upstream gSender only offers 10 (choose 10 for the upstream behaviour). Takes effect immediately.',
                     },
                     {
                         label: 'Feed override step',

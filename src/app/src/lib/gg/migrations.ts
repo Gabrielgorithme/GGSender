@@ -18,6 +18,18 @@ const STEPS: Array<{ version: number; apply: (get: Get, set: Set) => void }> = [
             set('workspace.gg.feedOverrideStep', '1');
         },
     },
+    {
+        // 0.5.1: spindle override in 1% steps by default. Up to 0.5.0 the
+        // default was 10; an install still at 10 is moved to 1, a step the
+        // owner chose (1, 2 or 5) is kept.
+        version: 5,
+        apply: (get, set) => {
+            const step = String(get('workspace.gg.spindleOverrideStep', '10'));
+            if (step === '10') {
+                set('workspace.gg.spindleOverrideStep', '1');
+            }
+        },
+    },
 ];
 
 /** @returns the versions applied */
