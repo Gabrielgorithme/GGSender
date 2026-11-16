@@ -52,6 +52,13 @@ export interface Workspace {
     powerSaving: boolean;
     park: object;
     jobTimes: number[];
+    // GGSender additions
+    gg: {
+        spindleOverrideStep: string;
+        feedOverrideStep: string;
+        loadedTool: { tool: string | null; since: number | null };
+        sameToolPolicy: string;
+    };
     toolChange: {
         passthrough: boolean;
         skipDialog: boolean;
@@ -60,6 +67,7 @@ export interface Workspace {
         safeZ: number;
         returnToStartZ: boolean;
         sendToolNumber: boolean;
+        feedRules: string;
         manualPosition: BasicPosition;
         firstToolBehaviour: FirstToolBehavior;
     };
