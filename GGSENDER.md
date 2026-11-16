@@ -3,12 +3,15 @@
 A personal fork of [gSender](https://github.com/Sienci-Labs/gsender) (GPLv3) for a FluidNC machine
 driven through gSender's Grbl controller with a fixed tool length sensor.
 
-This file is the entry point for whoever edits this fork next, human or AI. It covers what was
+This file is the entry point for whoever edits this fork next, human or AI. `CLAUDE.md` is the short
+version that Claude Code loads by itself. It covers what was
 changed and why, how to build and install, the traps, and what is still to do.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
 - Fork build: **0.4.1**, set in `src/app/src/gg-build.json`.
-- Branches: one branch per build, each on top of the previous one (`gg/0.1.0`, `gg/0.2.0-diag`, `gg/0.3.0`, `gg/0.4.0`, `gg/0.4.1`), with a pull request into the one below. `gg/main` is untouched 1.6.4 until those are merged.
+- Branches: `gg/main` is the current state of the fork and the repository's default branch.
+  Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
+  `gg/0.x` branches are history.
 - Not supported by Sienci Labs. Do not report problems with this build to them.
 
 ## Rules for editing
