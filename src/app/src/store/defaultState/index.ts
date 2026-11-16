@@ -78,6 +78,7 @@ const defaultState: State = {
             spindleOverrideStep: '10',
             feedOverrideStep: '1',
             preflightOnLoad: 'When there are warnings',
+            preflightHidden: '',
             settingsVersion: 0,
             // Tool gSender believes is in the spindle; null = unknown
             loadedTool: {

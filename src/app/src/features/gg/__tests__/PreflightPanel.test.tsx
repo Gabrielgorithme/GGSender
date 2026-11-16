@@ -51,6 +51,7 @@ describe('GGSender: pre-flight panel', () => {
         store.set('workspace.gg.loadedTool', { tool: null, since: null });
         store.set('workspace.toolChange.feedRules', '');
         store.set('workspace.gg.preflightOnLoad', 'When there are warnings');
+        store.set('workspace.gg.preflightHidden', '');
         setPreflight(null);
     });
 
@@ -115,5 +116,53 @@ describe('GGSender: pre-flight panel', () => {
         expect(shouldAutoOpen('When there are warnings', bad)).toBe(true);
         expect(shouldAutoOpen('Every file', clean)).toBe(true);
         expect(shouldAutoOpen('Never', bad)).toBe(false);
+    });
+
+    // ---- GGSender 0.4.1: hiding kinds of warning --------------------------
+
+    const RAPID_LOW = 'G21 G90\nS10000 M3\nG0 X0 Y0 Z5\nG0 Z-1\nG1 X10 F500\nG0 Z5';
+
+    it('hides a kind of warning: gone from the list and the badge, and stays closed', async () => {
+        renderControl();
+        await load(RAPID_LOW);
+        // opened by itself because of the warning
+        expect(screen.getByTestId('gg-preflight-issue-RAPID_BELOW_ZERO')).toBeInTheDocument();
+        expect(screen.getByTestId('gg-preflight-badge')).toHaveTextContent('1');
+
+        act(() => {
+            fireEvent.click(screen.getByTestId('gg-preflight-hide-RAPID_BELOW_ZERO'));
+        });
+        expect(screen.queryByTestId('gg-preflight-issue-RAPID_BELOW_ZERO')).toBeNull();
+        expect(screen.queryByTestId('gg-preflight-badge')).toBeNull();
+        expect(screen.getByTestId('gg-preflight-hidden')).toHaveTextContent(/RAPID_BELOW_ZERO\s*\(1 in this file\)/);
+        expect(store.get('workspace.gg.preflightHidden')).toBe('RAPID_BELOW_ZERO');
+
+        // the next file with the same warning does not open the panel
+        await load(RAPID_LOW.replace('X10', 'X20'));
+        expect(screen.queryByTestId('gg-preflight-panel')).toBeNull();
+        expect(screen.queryByTestId('gg-preflight-badge')).toBeNull();
+    });
+
+    it('brings a hidden kind back', async () => {
+        store.set('workspace.gg.preflightHidden', 'RAPID_BELOW_ZERO');
+        renderControl();
+        await load(RAPID_LOW);
+        fireEvent.click(screen.getByTestId('gg-preflight-button'));
+        act(() => {
+            fireEvent.click(screen.getByTestId('gg-preflight-unhide-RAPID_BELOW_ZERO'));
+        });
+        expect(screen.getByTestId('gg-preflight-issue-RAPID_BELOW_ZERO')).toBeInTheDocument();
+        expect(screen.getByTestId('gg-preflight-badge')).toHaveTextContent('1');
+        expect(store.get('workspace.gg.preflightHidden')).toBe('');
+    });
+
+    it('offers no hide button on errors, and ignores an error code in the list', async () => {
+        store.set('workspace.gg.preflightHidden', 'TRAVEL_Z\nFEED_UNDEFINED');
+        renderControl({ mpos: { x: -200, y: -150, z: -5 } });
+        await load('G21\nM3 S1000\nG0 Z10\nG1 X10 Z-1');
+        expect(screen.getByTestId('gg-preflight-issue-TRAVEL_Z')).toBeInTheDocument();
+        expect(screen.getByTestId('gg-preflight-issue-FEED_UNDEFINED')).toBeInTheDocument();
+        expect(screen.queryByTestId('gg-preflight-hide-TRAVEL_Z')).toBeNull();
+        expect(screen.queryByTestId('gg-preflight-hide-FEED_UNDEFINED')).toBeNull();
     });
 });

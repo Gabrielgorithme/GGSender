@@ -256,6 +256,14 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         description:
                             'GGSender: when to open the pre-flight panel by itself after loading a file. It can always be opened with the CHK button in the 3D view.',
                     },
+                    {
+                        label: 'Hidden pre-flight warnings',
+                        key: 'workspace.gg.preflightHidden',
+                        type: 'textarea',
+                        defaultValue: '',
+                        description:
+                            'GGSender: kinds of pre-flight warning not shown, not counted on the CHK badge and not opening the panel. One code per line; added by "Hide this kind" in the pre-flight panel. Errors cannot be hidden. Empty the box to show everything again.',
+                    },
                     // --------------------------------------------------------
                     {
                         label: 'Check file on load',

@@ -27,6 +27,13 @@ import {
 } from 'app/lib/gg/preflightStore';
 import { LOADED_TOOL_KEY, normalizeTool } from 'app/lib/gg/loadedTool';
 import { requestPickLine } from './pickTopics';
+import {
+    canHide,
+    getHiddenCodes,
+    hideCode,
+    splitIssues,
+    unhideCode,
+} from 'app/lib/gg/preflightHidden';
 
 export const PREFLIGHT_OPEN_KEY = 'workspace.gg.preflightOnLoad';
 export const PREFLIGHT_ALWAYS = 'Every file';
@@ -122,15 +129,56 @@ const LineLink = ({ line }: { line?: number }) =>
     ) : null;
 
 const IssueRow = ({ issue }: { issue: PreflightIssue }) => (
-    <li className="flex gap-2 py-0.5" data-testid={`gg-preflight-issue-${issue.code}`}>
+    <li className="flex gap-2 py-0.5 group" data-testid={`gg-preflight-issue-${issue.code}`}>
         <span className={`w-16 flex-shrink-0 font-semibold ${SEVERITY_STYLE[issue.severity]}`}>
             {SEVERITY_LABEL[issue.severity]}
         </span>
         <span className="flex-1">
             {issue.message} <LineLink line={issue.line} />
         </span>
+        {canHide(issue) && (
+            <button
+                type="button"
+                className="flex-shrink-0 self-start text-xs px-1.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                onClick={() => hideCode(issue.code)}
+                title="Hide this kind of warning for every file. Bring it back at the bottom of this list or in Settings."
+                data-testid={`gg-preflight-hide-${issue.code}`}
+            >
+                Hide this kind
+            </button>
+        )}
     </li>
 );
+
+/** The kinds the user hid, with how many of each this file has. */
+const HiddenList = ({ hiddenIssues }: { hiddenIssues: PreflightIssue[] }) => {
+    const codes = Array.from(getHiddenCodes()).sort();
+    if (codes.length === 0) {
+        return null;
+    }
+    const here = (code: string) => hiddenIssues.filter((i) => i.code === code).length;
+    return (
+        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400" data-testid="gg-preflight-hidden">
+            <div>Hidden kinds of warning:</div>
+            <ul>
+                {codes.map((code) => (
+                    <li key={code} className="flex gap-2 items-center">
+                        <span className="font-mono">{code}</span>
+                        <span>{here(code) > 0 ? `(${here(code)} in this file)` : ''}</span>
+                        <button
+                            type="button"
+                            className="underline"
+                            onClick={() => unhideCode(code)}
+                            data-testid={`gg-preflight-unhide-${code}`}
+                        >
+                            show again
+                        </button>
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+};
 
 interface PanelProps {
     entry: PreflightEntry;
@@ -140,7 +188,10 @@ interface PanelProps {
 export const PreflightPanel = ({ entry, onClose }: PanelProps) => {
     const { report, fileName } = entry;
     const ctx = useContextInput(report);
-    const issues = useMemo(() => (ctx ? allIssues(report, ctx) : report.issues), [report, ctx]);
+    const allFound = useMemo(() => (ctx ? allIssues(report, ctx) : report.issues), [report, ctx]);
+    // GGSender: kinds of warning the user hid (re-read on every render; the
+    // context hook re-renders on settings changes)
+    const { shown: issues, hidden: hiddenIssues } = splitIssues(allFound, getHiddenCodes());
     const travel = ctx?.travel;
 
     return (
@@ -170,6 +221,7 @@ export const PreflightPanel = ({ entry, onClose }: PanelProps) => {
                             ))}
                         </ul>
                     )}
+                    <HiddenList hiddenIssues={hiddenIssues} />
                 </section>
 
                 <section>
@@ -299,7 +351,10 @@ export const PreflightControl = () => {
     // checks for it are available (next render)
     const [decideOpen, setDecideOpen] = useState(false);
     const ctx = useContextInput(entry?.report ?? null);
-    const issues = entry && ctx ? allIssues(entry.report, ctx) : [];
+    // GGSender: hidden kinds count neither in the badge nor for auto-open
+    const issues = entry && ctx
+        ? splitIssues(allIssues(entry.report, ctx), getHiddenCodes()).shown
+        : [];
     const serious = countSerious(issues);
     const hasError = issues.some((i) => i.severity === 'error');
 

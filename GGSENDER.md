@@ -7,8 +7,8 @@ This file is the entry point for whoever edits this fork next, human or AI. It c
 changed and why, how to build and install, the traps, and what is still to do.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.4.0**, set in `src/app/src/gg-build.json`.
-- Branches: one branch per build, each on top of the previous one (`gg/0.1.0`, `gg/0.2.0-diag`, `gg/0.3.0`, `gg/0.4.0`), with a pull request into the one below. `gg/main` is untouched 1.6.4 until those are merged.
+- Fork build: **0.4.1**, set in `src/app/src/gg-build.json`.
+- Branches: one branch per build, each on top of the previous one (`gg/0.1.0`, `gg/0.2.0-diag`, `gg/0.3.0`, `gg/0.4.0`, `gg/0.4.1`), with a pull request into the one below. `gg/main` is untouched 1.6.4 until those are merged.
 - Not supported by Sienci Labs. Do not report problems with this build to them.
 
 ## Rules for editing
@@ -136,6 +136,15 @@ a simulated board that answers like Grbl: `ok` per line, a status report per `?`
 that no T word reaches the board. Extend it when changing anything in the stream path.
 
 ## Change log
+
+### 0.4.1 (on gSender 1.6.4)
+
+**Hide a kind of pre-flight warning.** Each warning and note in the pre-flight panel has a *Hide
+this kind* button. Hidden kinds are not listed, not counted on the CHK badge and do not open the
+panel, for every file. They are listed at the bottom of the panel with *show again*, and kept in
+the setting *Hidden pre-flight warnings* (`workspace.gg.preflightHidden`, one code per line,
+editable). Errors (travel exceeded, feed before any F) cannot be hidden; an error code put in the
+setting by hand is ignored. File: `lib/gg/preflightHidden.ts`.
 
 ### 0.4.0 (on gSender 1.6.4)
 
