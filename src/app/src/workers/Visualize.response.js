@@ -3,6 +3,7 @@ import { store as reduxStore } from 'app/store/redux';
 import _get from 'lodash/get';
 import isNumber from 'lodash/isNumber';
 import { setPreflight } from 'app/lib/gg/preflightStore'; // GGSender
+import { setJobInfo } from 'app/lib/gg/jobInfoStore'; // GGSender
 
 import store from 'app/store';
 import {
@@ -139,6 +140,11 @@ const handleGeometryReady = (data) => {
                 _get(reduxStore.getState(), 'file.name', ''),
             );
         }
+        // GGSender: operations and tool table of the newly loaded file
+        setJobInfo(
+            data.ggJob || null,
+            _get(reduxStore.getState(), 'file.name', ''),
+        );
     }
 
     reduxStore.dispatch(updateFileProcessing(false));

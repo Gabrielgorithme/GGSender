@@ -78,4 +78,25 @@ describe('GGSender: visualize worker line table', () => {
         const { geometry } = run('T2 M6\nM3 S1000\nG1 X5 Z-1 F100');
         expect(geometry.ggPreflight.sections[0]).toMatchObject({ tool: '2', changeLine: 1, cutZMin: -1 });
     });
+
+    it('sends the operations and tool table, timed with the same estimate as the job', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const content = fs.readFileSync(
+            path.join(__dirname, '../../lib/gg/__tests__/fixtures/fusion-job-trimmed.nc'),
+            'utf8',
+        );
+        const { geometry } = run(content);
+        const job = geometry.ggJob;
+        expect(job.operations).toHaveLength(11);
+        expect(job.tools['45']).toMatchObject({ kind: 'bullnose', cornerRadius: 0.5 });
+        // the estimate gSender sends to the server, one value per line with code
+        const estimates: number[] = geometry.parsedData?.estimates ?? posted.find((m) => m.type === 'metadataReady')?.parsedData?.estimates;
+        // (rapids have no estimate with this test's machine limits: null, skipped like the job does)
+        const total = estimates.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+        expect(job.totalSeconds).toBeCloseTo(total, 6);
+        const sumOps = job.operations.reduce((a: number, o: any) => a + o.seconds, 0);
+        // everything from the first operation on; the header lines take no time
+        expect(sumOps).toBeCloseTo(total, 6);
+    });
 });

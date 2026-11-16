@@ -18,6 +18,7 @@ import GcodeEditor from './GcodeEditor';
 // GGSender
 import PickCard from 'app/features/gg/PickCard';
 import PreflightControl from 'app/features/gg/PreflightPanel';
+import JobOperations from 'app/features/gg/JobOperations';
 import { Actions, State } from './definitions';
 
 interface Props {
@@ -143,7 +144,8 @@ const PrimaryVisualizer = ({
                     />
                     <WorkspaceSelector />
 
-                    {timeline}
+                    {/* GGSender: operations list, or the upstream tool timeline */}
+                    <JobOperations fallback={timeline} />
 
                     {/* GGSender: picked G-code line, pre-flight check */}
                     <PickCard />

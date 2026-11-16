@@ -60,6 +60,8 @@ export interface Workspace {
         sameToolPolicy: string;
         preflightOnLoad: string;
         preflightHidden: string;
+        operationsPanel: boolean;
+        toolDrawing: boolean;
         settingsVersion: number;
     };
     toolChange: {

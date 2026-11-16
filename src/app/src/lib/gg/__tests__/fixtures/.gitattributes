@@ -1,0 +1,2 @@
+# GGSender: G-code test files kept byte for byte (the owner's files use CRLF)
+*.nc -text
