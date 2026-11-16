@@ -27,6 +27,10 @@ import {
     getToolString,
 } from 'app/lib/toolChangeUtils';
 import { store as reduxStore } from 'app/store/redux';
+import {
+    getReturnZLines,
+    getToolChangeSafeZ,
+} from 'app/lib/gg/toolChangeMoves';
 import get from 'lodash/get';
 
 // $132 is max z travel, if soft limits ($20) enabled we need to make sure probe distance will not exceed max limits
@@ -115,10 +119,9 @@ const createWizard = (count: number) => {
         onStart: () => {
             const settings = getProbeSettings();
             const position = store.get('workspace.toolChangePosition');
-            // Get $13 value for adjustment of Z Safe Height
-            const state = reduxStore.getState();
-            const $13 = get(state, 'controller.settings.settings.$13', '0');
-            const zSafe = $13 === '1' ? '-0.2' : '-5';
+            // GGSender: safe height is a setting (machine Z, mm). The moves
+            // that use it run under G21, so no unit adjustment is needed.
+            const zSafe = getToolChangeSafeZ();
 
             const zProbeDistance = calculateMaxZProbeDistance(
                 settings.zProbeDistance,
@@ -216,7 +219,9 @@ const createWizard = (count: number) => {
                                     '(Returning to initial position)',
                                     'G53 G0 Z[global.toolchange.Z_SAFE_HEIGHT]',
                                     'G90 G0 X[global.toolchange.XPOS] Y[global.toolchange.YPOS]',
-                                    'G90 G0 Z[global.toolchange.ZPOS]',
+                                    ...getReturnZLines([
+                                        'G90 G0 Z[global.toolchange.ZPOS]',
+                                    ]),
                                     '(Restore initial modals)',
                                     '[global.toolchange.UNITS] [global.toolchange.DISTANCE] [global.toolchange.FEEDRATE]',
                                     '%wait',

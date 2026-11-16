@@ -32,11 +32,17 @@ export default defineConfig({
             include: ['process'],
             globals: { global: true, process: true },
         }),
-        sentryVitePlugin({
-            org: process.env.SENTRY_ORG,
-            project: process.env.SENTRY_PROJECT,
-            authToken: process.env.SENTRY_AUTH_TOKEN,
-        }),
+        // GGSender: only load the Sentry upload plugin when a token is
+        // configured; without one it adds nothing and can stall the build.
+        ...(process.env.SENTRY_AUTH_TOKEN
+            ? [
+                  sentryVitePlugin({
+                      org: process.env.SENTRY_ORG,
+                      project: process.env.SENTRY_PROJECT,
+                      authToken: process.env.SENTRY_AUTH_TOKEN,
+                  }),
+              ]
+            : []),
     ],
     resolve: {
         alias: {

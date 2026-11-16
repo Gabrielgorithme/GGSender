@@ -1935,6 +1935,65 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             return strategy !== 'Fixed Tool Sensor';
                         },
                     },
+                    // GGSender additions ------------------------------------
+                    {
+                        label: 'Send tool numbers to controller',
+                        type: 'boolean',
+                        key: 'workspace.toolChange.sendToolNumber',
+                        defaultValue: false,
+                        description:
+                            'GGSender: when off, T words are kept out of the g-code stream and gSender tracks the tool number itself. Grbl-family firmware rejects tool numbers above 255 (error:38). Ignored when Passthrough is on.',
+                        onApply: () => {
+                            updateToolchangeContext();
+                        },
+                        hidden: (getPending) => {
+                            return getPending(
+                                'workspace.toolChange.passthrough',
+                                false,
+                            );
+                        },
+                    },
+                    {
+                        label: 'Tool change safe height',
+                        type: 'number',
+                        key: 'workspace.toolChange.safeZ',
+                        unit: 'mm',
+                        max: 0,
+                        defaultValue: -0.1,
+                        description:
+                            'GGSender: machine Z the tool change wizards retract to before moving in X/Y, in mm. 0 is the top of travel; use a small negative value to stay clear of the soft limit. (Upstream gSender uses -5 or -10.)',
+                        hidden: (getPending) => {
+                            const strategy = getPending(
+                                'workspace.toolChangeOption',
+                                '',
+                            );
+                            return (
+                                strategy === 'Ignore' ||
+                                strategy === 'Pause' ||
+                                strategy === 'Code'
+                            );
+                        },
+                    },
+                    {
+                        label: 'Return to starting Z after tool change',
+                        type: 'boolean',
+                        key: 'workspace.toolChange.returnToStartZ',
+                        defaultValue: false,
+                        description:
+                            'GGSender: when off, the machine stays at the tool change safe height after returning to X/Y and the program continues from there. When on, it plunges back to the Z it was at when the tool change started (upstream behaviour).',
+                        hidden: (getPending) => {
+                            const strategy = getPending(
+                                'workspace.toolChangeOption',
+                                '',
+                            );
+                            return (
+                                strategy === 'Ignore' ||
+                                strategy === 'Pause' ||
+                                strategy === 'Code'
+                            );
+                        },
+                    },
+                    // --------------------------------------------------------
                     {
                         label: 'Set tool change location',
                         type: 'boolean',

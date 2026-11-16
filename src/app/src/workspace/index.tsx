@@ -31,6 +31,7 @@ import DataCollection from '../features/DataCollection';
 import { AccessibilityAnnouncer } from '../features/Helper/AccessibilityAnnouncer';
 import { KeyboardMapOverlay } from '../features/Helper/KeyboardMapOverlay';
 import pkg from '../../package.json';
+import ggBuild from '../gg-build.json';
 import store from 'app/store';
 import {
     getYAxisAlignmentProbing,
@@ -59,7 +60,8 @@ const Workspace = () => {
             }, 100);
         }
 
-        document.title = `gSender ${pkg.version}`;
+        // GGSender: show which modified build is running
+        document.title = `${ggBuild.name} ${ggBuild.version} (gSender ${pkg.version})`;
     }, [location]);
 
     useDarkMode();

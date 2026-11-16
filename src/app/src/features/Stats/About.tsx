@@ -10,6 +10,7 @@ import { cn } from 'app/lib/utils';
 import { RootState } from 'app/store/redux';
 import { useSelector } from 'react-redux';
 import { UpdateGSender } from 'app/features/Stats/components/UpdateGSender.tsx';
+import ggBuild from 'app/gg-build.json';
 
 const About = () => {
     const { releaseNotes, status, fetchReleaseNotes } = useGetReleaseNotes();
@@ -143,6 +144,10 @@ const About = () => {
                         </p>
                         <p className="text-sm text-gray-500 dark:text-white">
                             Version {version}
+                        </p>
+                        <p className="text-sm text-gray-500 dark:text-white">
+                            {ggBuild.name} {ggBuild.version} (modified build,
+                            not supported by Sienci Labs)
                         </p>
                     </div>
                 </div>

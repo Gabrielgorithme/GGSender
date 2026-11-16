@@ -16,4 +16,7 @@ export interface Surfacing {
     shouldDwell: boolean;
     flood: boolean;
     mist: boolean;
+    // GGSender additions
+    safeHeight?: number;
+    rampAngle?: number;
 }

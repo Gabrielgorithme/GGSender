@@ -199,7 +199,7 @@ export default class Generator {
 
     rampIntoMaterial = (z, direction = { axis: 'Y', factor: 1 }) => {
         const { axis, factor } = direction;
-        const degrees = this.rampingDegrees;
+        const degrees = this.getRampingDegrees();
         const { skimDepth } = this.surfacing;
         const units = store.get('workspace.units');
         const depth = skimDepth;
@@ -322,12 +322,36 @@ export default class Generator {
         ];
     }
 
-    getSafeZValue() {
+    // Arrow function: generate() calls this detached from the instance
+    getSafeZValue = () => {
+        // GGSender: the start/clearance height is a field of the surfacing
+        // dialog (already in display units, like the other dimensions).
+        // Upstream hard-codes 3mm / 0.12in, kept as the fallback.
+        const custom = Number(this.surfacing?.safeHeight);
+        if (
+            this.surfacing?.safeHeight !== undefined &&
+            this.surfacing?.safeHeight !== null &&
+            this.surfacing?.safeHeight !== '' &&
+            Number.isFinite(custom) &&
+            custom >= 0
+        ) {
+            return custom;
+        }
+
         const workspaceUnits = store.get('workspace.units');
         const zVal = workspaceUnits === METRIC_UNITS ? 3 : 0.12;
 
         return zVal;
-    }
+    };
+
+    // GGSender: ramp angle from the dialog, upstream value (10) otherwise
+    getRampingDegrees = () => {
+        const custom = Number(this.surfacing?.rampAngle);
+        if (Number.isFinite(custom) && custom >= 1 && custom <= 89) {
+            return custom;
+        }
+        return this.rampingDegrees;
+    };
 
     returnToZero = (stopSpindle = false) => {
         const z = this.getSafeZValue();

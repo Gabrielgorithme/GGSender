@@ -25,6 +25,11 @@ import {
     getToolString,
 } from 'app/lib/toolChangeUtils';
 
+import {
+    getToolChangeSafeZ,
+    shouldReturnToStartZ,
+} from 'app/lib/gg/toolChangeMoves';
+
 const wizard = {
     intro: {
         icon: 'fas fa-caution',
@@ -44,6 +49,7 @@ const wizard = {
             '%global.toolchange.XPOS=posx',
             '%global.toolchange.YPOS=posy',
             '%global.toolchange.ZPOS=posz',
+            `%global.toolchange.Z_SAFE_HEIGHT=${getToolChangeSafeZ()}`,
             '%global.toolchange.UNITS=modal.units',
             '%global.toolchange.SPINDLE=modal.spindle',
             '%global.toolchange.DISTANCE=modal.distance',
@@ -122,15 +128,32 @@ const wizard = {
                     actions: [
                         {
                             label: 'Resume Job',
-                            gcodeLines: [
-                                '(Returning to initial position)',
-                                'G21',
-                                'G90 [global.toolchange.UNITS] G0 X[global.toolchange.XPOS] Y[global.toolchange.YPOS]',
-                                'G90 [global.toolchange.UNITS] G0 Z[global.toolchange.ZPOS]',
-                                '(Restore initial modals)',
-                                '[global.toolchange.SPINDLE] [global.toolchange.UNITS] [global.toolchange.DISTANCE] [global.toolchange.FEEDRATE]',
-                                '%toolchange_complete',
-                            ],
+                            // GGSender: a getter, so the setting is read each
+                            // time the wizard runs (this wizard object is
+                            // created once, at load).
+                            get gcodeLines() {
+                                if (shouldReturnToStartZ()) {
+                                    // Upstream behaviour
+                                    return [
+                                        '(Returning to initial position)',
+                                        'G21',
+                                        'G90 [global.toolchange.UNITS] G0 X[global.toolchange.XPOS] Y[global.toolchange.YPOS]',
+                                        'G90 [global.toolchange.UNITS] G0 Z[global.toolchange.ZPOS]',
+                                        '(Restore initial modals)',
+                                        '[global.toolchange.SPINDLE] [global.toolchange.UNITS] [global.toolchange.DISTANCE] [global.toolchange.FEEDRATE]',
+                                        '%toolchange_complete',
+                                    ];
+                                }
+                                return [
+                                    '(Returning to initial position)',
+                                    'G53 G21 G0 Z[global.toolchange.Z_SAFE_HEIGHT]',
+                                    'G90 [global.toolchange.UNITS] G0 X[global.toolchange.XPOS] Y[global.toolchange.YPOS]',
+                                    '(Z stays at tool change safe height)',
+                                    '(Restore initial modals)',
+                                    '[global.toolchange.SPINDLE] [global.toolchange.UNITS] [global.toolchange.DISTANCE] [global.toolchange.FEEDRATE]',
+                                    '%toolchange_complete',
+                                ];
+                            },
                         },
                     ],
                 },
