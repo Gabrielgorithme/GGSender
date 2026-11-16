@@ -228,4 +228,79 @@ describe('GGSender: job streaming against a simulated board', () => {
         expect(board.received.filter((l) => /^G[12] /.test(l)).length).toBe(3000);
         await stop(controller, board);
     });
+
+    // ---- GGSender 0.3.0 ---------------------------------------------------
+
+    const motionFeeds = (board) => board.received
+        .filter((l) => /^G1 /.test(l))
+        .map((l) => /F([\d.]+)/.exec(l)?.[1]);
+
+    it('rewrites feeds for the tool named in a rule', async () => {
+        const { board, controller } = await start({
+            toolChangeOption: 'Ignore',
+            feedRules: 'T405 F1800 -> F450',
+        });
+        const result = await runJob(controller, makeJob(300));
+        expect(result.received).toBe(result.total);
+        const feeds = motionFeeds(board);
+        expect(feeds.length).toBeGreaterThan(200);
+        expect(new Set(feeds)).toEqual(new Set(['450']));
+        // arcs and everything else are untouched
+        expect(board.received.filter((l) => /^G2 /.test(l)).length).toBeGreaterThan(0);
+        expect(board.received).toContain('M3 S12000');
+        await stop(controller, board);
+    });
+
+    it('leaves feeds alone when the rule is for another tool', async () => {
+        const { board, controller } = await start({
+            toolChangeOption: 'Ignore',
+            feedRules: 'T5 F1800 -> F450',
+        });
+        await runJob(controller, makeJob(300));
+        expect(new Set(motionFeeds(board))).toEqual(new Set(['1800']));
+        await stop(controller, board);
+    });
+
+    it('picks up a rule added while the job runs', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' });
+        const result = await runJob(controller, makeJob(3000), () => {
+            controller.command('toolchange:context', {
+                toolChangeOption: 'Ignore',
+                feedRules: 'T405 F* -> 50%',
+            });
+        });
+        expect(result.received).toBe(result.total);
+        const feeds = motionFeeds(board);
+        const firstSlow = feeds.indexOf('900');
+        expect(feeds[0]).toBe('1800');
+        expect(firstSlow).toBeGreaterThan(0);
+        // once the rule is in, every later feed follows it
+        expect(new Set(feeds.slice(firstSlow))).toEqual(new Set(['900']));
+        expect(new Set(feeds.slice(0, firstSlow))).toEqual(new Set(['1800']));
+        await stop(controller, board);
+    });
+
+    it('sends one realtime step per 1% spindle override request', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' });
+        const bytes = [];
+        const original = board.writeImmediate.bind(board);
+        board.writeImmediate = (data) => {
+            const text = String(data);
+            if (text.length === 1 && text.charCodeAt(0) >= 0x99 && text.charCodeAt(0) <= 0x9d) {
+                bytes.push(text.charCodeAt(0));
+            }
+            original(data);
+        };
+        // The simulated board reports no override, so the controller starts
+        // from 100%. Two quick requests, before any report could catch up:
+        controller.command('spindleOverride', 101);
+        controller.command('spindleOverride', 102);
+        await sleep(300);
+        expect(bytes).toEqual([0x9c, 0x9c]);
+        // and back down by 3
+        controller.command('spindleOverride', 99);
+        await sleep(300);
+        expect(bytes.slice(2)).toEqual([0x9d, 0x9d, 0x9d]);
+        await stop(controller, board);
+    });
 });

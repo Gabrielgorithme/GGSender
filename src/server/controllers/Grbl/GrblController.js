@@ -95,6 +95,8 @@ import {
 	shouldStripToolWord,
 	stripToolWord,
 } from "../../lib/gg/toolWord";
+import { overrideBase } from "../../lib/gg/overrideBase";
+import { applyFeedRules, rulesFromContext } from "../../lib/gg/feedRules";
 import {
 	attachStreamDiagnostics,
 	noteCommand,
@@ -321,6 +323,8 @@ class GrblController {
 					}
 					if (line === POSTHOOK_COMPLETE) {
 						log.debug("Finished toolchange, resuming program");
+						// GGSender: lets the interface record the loaded tool
+						this.emit("gg:toolchange:complete");
 						setTimeout(() => {
 							this.workflow.resume();
 						}, 500);
@@ -584,6 +588,10 @@ class GrblController {
 					const toolNumber = tool?.[2] || this.ggPendingTool || null;
 					const toolLabel = tool?.[0] || (toolNumber ? `T${toolNumber}` : null);
 					this.ggPendingTool = null;
+					// GGSender: lines from here on are cut with this tool
+					if (toolNumber) {
+						this.ggCurrentTool = toolNumber;
+					}
 
 					// GGSender: the Ignore and Code strategies never record the
 					// tool below; without the T word the firmware cannot report
@@ -652,6 +660,13 @@ class GrblController {
 					line = stripToolWord(line);
 				} else {
 					this.runner.ggTrackTool = false;
+				}
+
+				// GGSender: per-tool feed and speed rules (see lib/gg/feedRules)
+				const ggRules = rulesFromContext(this.toolChangeContext);
+				if (ggRules.length > 0) {
+					const ggTool = this.ggCurrentTool || this.runner.getTool() || null;
+					line = applyFeedRules(line, ggTool, ggRules);
 				}
 
 				const useAaxisForGrbl = store.get("preferences.useAaxisForGrbl", false);
@@ -2009,7 +2024,9 @@ class GrblController {
 				const [value] = args;
 				const [feedOV] = this.state.status.ov;
 
-				let diff = value - feedOV;
+				// GGSender: count from the last request while the report is stale
+				let diff = value - overrideBase(feedOV, this.ggLastFeedOverride);
+				this.ggLastFeedOverride = { value, at: Date.now() };
 
 				if (value === 100) {
 					this.FOQueue.push(String.fromCharCode(0x90));
@@ -2026,12 +2043,17 @@ class GrblController {
 				const [value] = args;
 				const [, , spindleOV] = this.state.status.ov;
 
-				let diff = value - spindleOV;
+				// GGSender: count from the last request while the report is stale
+				const spindleBase = overrideBase(spindleOV, this.ggLastSpindleOverride);
+				const spindleTarget = Math.min(230, Math.max(10, value));
+				this.ggLastSpindleOverride = { value: spindleTarget, at: Date.now() };
+
+				let diff = value - spindleBase;
 				//Limits for keyboard/gamepad shortcuts
 				if (value < 10) {
-					diff = 10 - spindleOV;
+					diff = 10 - spindleBase;
 				} else if (value > 230) {
-					diff = 230 - spindleOV;
+					diff = 230 - spindleBase;
 				}
 
 				if (value === 100) {

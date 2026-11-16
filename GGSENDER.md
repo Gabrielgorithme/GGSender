@@ -7,8 +7,8 @@ This file is the entry point for whoever edits this fork next, human or AI. It c
 changed and why, how to build and install, the traps, and what is still to do.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.2.0-diag**, set in `src/app/src/gg-build.json`.
-- Branches: `gg/main` holds the current state of the fork. Work on a branch, open a pull request into `gg/main`.
+- Fork build: **0.3.0**, set in `src/app/src/gg-build.json`.
+- Branches: one branch per build, each on top of the previous one (`gg/0.1.0`, `gg/0.2.0-diag`, `gg/0.3.0`), with a pull request into the one below. `gg/main` is untouched 1.6.4 until those are merged.
 - Not supported by Sienci Labs. Do not report problems with this build to them.
 
 ## Rules for editing
@@ -130,6 +130,53 @@ that no T word reaches the board. Extend it when changing anything in the stream
 
 ## Change log
 
+### 0.3.0 (on gSender 1.6.4)
+
+**Loaded tool is recorded, shown and correctable.**
+Upstream keeps no record of what a tool change left in the spindle. The tool number is now saved
+with the settings when a tool change finishes (`workspace.gg.loadedTool`), shown as a chip in the
+top bar (`T5`, or `T?` when unknown), and can be corrected or marked unknown by clicking the chip.
+It becomes unknown by itself if a job is stopped in the middle of a tool change.
+Files: `lib/gg/loadedTool.ts`, `features/gg/LoadedToolIndicator.tsx`, `controllerSagas.tsx`,
+and one `emit("gg:toolchange:complete")` in `GrblController.js`.
+
+**No forced tool change for the tool that is already loaded.**
+When an `M6` asks for the recorded tool, the setting *When the requested tool is already loaded*
+(`workspace.gg.sameToolPolicy`) decides: *Ask* (default), *Continue without asking*, or *Always run
+tool change* (upstream). Continuing skips the change and the probing; work Z is left as it is.
+The length reference: gSender probes the tool in the spindle on the first change of a job and
+matches every later tool to that reading. If the first `M6` was skipped that reading does not exist
+for the job, so the next real change is run as a first one (it probes the old tool before the
+swap). `effectiveToolChangeCount()` in `lib/gg/loadedTool.ts`.
+Applies to the three wizard strategies. With *Pause*, the requested tool is recorded as loaded when
+the pause is reached.
+
+**Override steps down to 1%.**
+The firmware has always had 1% realtime override commands and gSender's server already sends them;
+only the slider was fixed at 10. Settings *Spindle override step* and *Feed override step*
+(`workspace.gg.*OverrideStep`: 1, 2, 5 or 10). Below 10 the change is sent 0.25 s after the last
+click instead of 1 s. The server now counts the steps to send from the previous request while the
+controller's report is still catching up, otherwise quick fine steps were counted twice.
+Files: `features/JobControl/FeedOverride.tsx`, `server/lib/gg/overrideBase.js`.
+
+**Per-tool feed and speed rules.**
+Setting *Per-tool feed and speed rules* (`workspace.toolChange.feedRules`), one rule per line, for
+example `T5 F1000 -> F200`, `T5 F>800 -> F800`, `T5 F* -> 50%`, `T* S* -> 90%`. Applied to each
+program line in the sender, for the tool of the last `M6` seen. Rules can be changed while a job
+runs; they act on F and S words as they are sent, so the change shows at the next such word and a
+few lines later than that (lines already inside the controller). Syntax and limits are documented
+at the top of `server/lib/gg/feedRules.js`.
+
+**Progress area.** The bar that replaced the wood animation in 0.1.0 is gone; only the percentage
+remains.
+
+Tests added: `loadedTool`, `feedRules`, `overrideBase`, rendering tests for the indicator and the
+coordinate field, and four simulated-board tests (feed rules through the real controller, a rule
+added mid-job, 1% override steps).
+
+Not checked on the machine: everything above. Not checked at all: whether the settings screen can
+be opened while a job runs (needed to change feed rules mid-job).
+
 ### 0.2.0-diag (on gSender 1.6.4)
 
 **Traffic log and stream diagnostics.** See the section above. Added to find an intermittent stall
@@ -198,7 +245,23 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
-## To check on the machine after installing 0.1.0
+## To check on the machine after installing 0.3.0
+
+1. Title bar shows `GGSender 0.3.0 (gSender 1.6.4)`.
+2. Top bar shows a `T?` chip. Click it, type a number, Enter: it shows that tool. It keeps it after
+   a restart.
+3. Run a program whose first tool is the one shown: a prompt offers to continue without a tool
+   change. Continuing resumes the job with no motion to the tool setter.
+4. Same program with a second tool: at the second `M6` the wizard shows the "probe initial tool"
+   step before the swap.
+5. After a normal tool change the chip shows the new tool.
+6. Settings, *Spindle override step* = 1: the +/- buttons next to the spindle slider move 1% and the
+   reported override follows.
+7. Settings, *Per-tool feed and speed rules* = `T<n> F* -> 50%` for the tool in use: in the console
+   the F words of the job are halved. Remove the rule, they return.
+8. Check whether Settings can be opened while a job is running.
+
+## Checklist for 0.1.0 (reported working by the owner)
 
 Do these with the spindle off or as an air cut first.
 
@@ -215,10 +278,10 @@ Do these with the spindle off or as an air cut first.
 
 ## Still to do (agreed with the owner)
 
-- Loaded-tool indicator saved to disk, with manual correction and an "unknown" state.
-- Skip the tool change when the requested tool is already loaded; prompt on the first `M6`.
-  gSender 1.6.4 already has *First tool behaviour* (prompt, or probe length only); build on it.
-- Per-tool feed and speed rules applied in the sender's line filter.
+- Click a point of the toolpath in the 3D view to find its G-code line, and the reverse. The
+  visualizer already keeps a table from line number to vertex (`frames` in `GCodeVisualizer.js`),
+  used to grey out the part already cut, so both directions are a lookup plus a ray cast.
+- A panel for the feed rules next to the override sliders, if Settings cannot be opened mid-job.
 - Start from a chosen tool change, rebuilding modal state.
 - Editable tool-change sequences (text templates instead of code).
 - Pre-flight check on file load (tools, Z range per tool, travel limits).

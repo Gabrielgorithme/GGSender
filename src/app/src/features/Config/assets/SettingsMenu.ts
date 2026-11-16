@@ -73,6 +73,9 @@ import { THEMES_T } from 'app/features/Visualizer/definitions';
 import { JSX } from 'react';
 import posthog from 'posthog-js';
 import {updateToolchangeContext} from "app/features/Helper/Wizard.tsx";
+// GGSender: the rule parser is shared with the server
+import { parseFeedRules } from '../../../../../server/lib/gg/feedRules.js';
+import { toast } from 'app/lib/toaster';
 
 export interface SettingsMenuSection {
     label: string;
@@ -221,6 +224,26 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         description:
                             "Amount Z-axis will move up before moving in X/Y/A using go tos. (Doesn't apply to files, corner-movements, or parking, if homing is enabled this value becomes an offset from the top of the Z-axis, Default 0)",
                     },
+                    // GGSender additions ------------------------------------
+                    {
+                        label: 'Spindle override step',
+                        key: 'workspace.gg.spindleOverrideStep',
+                        type: 'select',
+                        options: ['1', '2', '5', '10'],
+                        defaultValue: '10',
+                        description:
+                            'GGSender: size of one step of the spindle override slider and its +/- buttons, in percent. The firmware accepts 1% steps; upstream gSender only offers 10. Takes effect immediately.',
+                    },
+                    {
+                        label: 'Feed override step',
+                        key: 'workspace.gg.feedOverrideStep',
+                        type: 'select',
+                        options: ['1', '2', '5', '10'],
+                        defaultValue: '10',
+                        description:
+                            'GGSender: size of one step of the feed override slider and its +/- buttons, in percent.',
+                    },
+                    // --------------------------------------------------------
                     {
                         label: 'Check file on load',
                         key: 'widgets.visualizer.checkFile',
@@ -1937,6 +1960,30 @@ export const SettingsMenu: SettingsMenuSection[] = [
                     },
                     // GGSender additions ------------------------------------
                     {
+                        label: 'When the requested tool is already loaded',
+                        type: 'select',
+                        key: 'workspace.gg.sameToolPolicy',
+                        options: [
+                            'Ask',
+                            'Continue without asking',
+                            'Always run tool change',
+                        ],
+                        defaultValue: 'Ask',
+                        description:
+                            'GGSender: what to do when a program asks for the tool shown as loaded in the top bar.\n\n"Ask" offers to continue without a tool change.\n\n"Continue without asking" skips the tool change.\n\n"Always run tool change" is the upstream behaviour.',
+                        hidden: (getPending) => {
+                            const strategy = getPending(
+                                'workspace.toolChangeOption',
+                                '',
+                            );
+                            return (
+                                strategy === 'Ignore' ||
+                                strategy === 'Pause' ||
+                                strategy === 'Code'
+                            );
+                        },
+                    },
+                    {
                         label: 'Send tool numbers to controller',
                         type: 'boolean',
                         key: 'workspace.toolChange.sendToolNumber',
@@ -2028,6 +2075,36 @@ export const SettingsMenu: SettingsMenuSection[] = [
                                 strategy !== 'Fixed Tool Sensor' ||
                                 !moveToLocation
                             );
+                        },
+                    },
+                    // GGSender addition
+                    {
+                        label: 'Per-tool feed and speed rules',
+                        type: 'textarea',
+                        key: 'workspace.toolChange.feedRules',
+                        defaultValue: '',
+                        description:
+                            'GGSender: rewrite F and S words while a given tool is cutting. One rule per line, first match wins. Can be changed while a job runs; applies from the next F or S word sent.\n\nT5 F1000 -> F200 (replace a feed)\nT5 F>800 -> F800 (cap)\nT5 F* -> 50% (scale every feed)\nT12 S18000 -> S12000 (spindle speed)\nT* S* -> 90% (any tool)\n\nLines starting with # are ignored. Leave empty for no rules.',
+                        onApply: () => {
+                            updateToolchangeContext();
+                            const { errors } = parseFeedRules(
+                                store.get('workspace.toolChange.feedRules', ''),
+                            );
+                            if (errors.length > 0) {
+                                toast.error(
+                                    `Feed rules: ${errors.length} line(s) ignored - ` +
+                                        errors
+                                            .map(
+                                                (e: {
+                                                    line: number;
+                                                    reason: string;
+                                                }) =>
+                                                    `line ${e.line}: ${e.reason}`,
+                                            )
+                                            .join('; '),
+                                    { position: 'bottom-right' },
+                                );
+                            }
                         },
                     },
                     {
