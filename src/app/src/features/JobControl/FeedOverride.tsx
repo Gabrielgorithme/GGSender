@@ -28,6 +28,22 @@ const debouncedFeedHandler = debounce((value) => {
     controller.command('feedOverride', Number(value));
 }, 750);
 
+// GGSender: the override step is a setting (upstream: fixed at 10). With a
+// fine step the long upstream delay before sending makes it hard to tune by
+// ear, so fine steps are sent sooner.
+const FINE_STEP_DELAY = 250;
+const fineSpindleHandler = debounce((value) => {
+    controller.command('spindleOverride', Number(value));
+}, FINE_STEP_DELAY);
+const fineFeedHandler = debounce((value) => {
+    controller.command('feedOverride', Number(value));
+}, FINE_STEP_DELAY);
+
+export const readOverrideStep = (key: string): number => {
+    const step = Number(store.get(key, 10));
+    return [1, 2, 5, 10].includes(step) ? step : 10;
+};
+
 let globalOvTimestamp = 0;
 let globalLocalOvFTimestamp = 0;
 let globalLocalOvSTimestamp = 0;
@@ -65,6 +81,15 @@ const Overrides: React.FC<OverridesProps> = ({
             ? 'Spindle'
             : 'Laser',
     );
+    const [spindleStep, setSpindleStep] = useState(
+        readOverrideStep('workspace.gg.spindleOverrideStep'),
+    );
+    const [feedStep, setFeedStep] = useState(
+        readOverrideStep('workspace.gg.feedOverrideStep'),
+    );
+    const sendSpindle =
+        spindleStep < 10 ? fineSpindleHandler : debouncedSpindleHandler;
+    const sendFeed = feedStep < 10 ? fineFeedHandler : debouncedFeedHandler;
     const [localOvF, setLocalOvF] = useState(ovF);
     const [localOvS, setLocalOvS] = useState(ovS);
     //const units: UNITS_EN = store.get('workspace.units', METRIC_UNITS);
@@ -75,6 +100,8 @@ const Overrides: React.FC<OverridesProps> = ({
     }
 
     const handleStoreChange = () => {
+        setSpindleStep(readOverrideStep('workspace.gg.spindleOverrideStep'));
+        setFeedStep(readOverrideStep('workspace.gg.feedOverrideStep'));
         setShowSpindleOverride(store.get('workspace.spindleFunctions'));
         setSpindleOverrideLabel(
             store.get('widgets.spindle.mode', SPINDLE_MODE) === SPINDLE_MODE
@@ -108,7 +135,7 @@ const Overrides: React.FC<OverridesProps> = ({
             }
         >
             <RangeSlider
-                step={10}
+                step={feedStep}
                 min={OVERRIDE_VALUE_RANGES.MIN}
                 max={OVERRIDE_VALUE_RANGES.MAX}
                 value={feedrate}
@@ -126,17 +153,17 @@ const Overrides: React.FC<OverridesProps> = ({
                 onButtonPress={(values) => {
                     setLocalOvF(values[0]);
                     globalLocalOvFTimestamp = Date.now();
-                    debouncedFeedHandler(values[0]);
+                    sendFeed(values[0]);
                 }}
                 // change to lost pointer capture as pointer up does not always fire when you pull past the slider and let go
                 onLostPointerCapture={(_e) => {
-                    debouncedFeedHandler(localOvF);
+                    sendFeed(localOvF);
                 }}
                 id="feed-override"
             />
             {showSpindleOverride && (
                 <RangeSlider
-                    step={10}
+                    step={spindleStep}
                     min={OVERRIDE_VALUE_RANGES.MIN}
                     max={OVERRIDE_VALUE_RANGES.MAX}
                     value={spindle}
@@ -162,10 +189,10 @@ const Overrides: React.FC<OverridesProps> = ({
                     onButtonPress={(values) => {
                         setLocalOvS(values[0]);
                         globalLocalOvSTimestamp = Date.now();
-                        debouncedSpindleHandler(values[0]);
+                        sendSpindle(values[0]);
                     }}
                     onPointerUp={(_e) => {
-                        debouncedSpindleHandler(localOvS);
+                        sendSpindle(localOvS);
                     }}
                     id="spindle-override"
                 />
