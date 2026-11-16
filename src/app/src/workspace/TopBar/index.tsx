@@ -6,6 +6,7 @@ import CenterArea from './CenterArea';
 import { IconUpdater } from 'app/features/IconUpdater';
 import { useEffect } from 'react';
 import store from 'app/store';
+import { LoadedToolIndicator } from 'app/features/gg/LoadedToolIndicator';
 
 interface Props {
     isRemoteWindow?: boolean;
@@ -30,6 +31,9 @@ export const TopBar = ({ isRemoteWindow }: Props) => {
             <Connection />
 
             <CenterArea />
+
+            {/* GGSender: tool recorded as loaded */}
+            <LoadedToolIndicator />
 
             <StatusIcons />
 

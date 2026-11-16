@@ -29,6 +29,20 @@ import store from 'app/store';
 import { store as reduxStore } from 'app/store/redux';
 import controller from 'app/lib/controller';
 import manualToolChange from 'app/wizards/manualToolchange';
+import {
+    createTracker,
+    decideSameTool,
+    effectiveToolChangeCount,
+    getLoadedTool,
+    getSameToolPolicy,
+    normalizeTool,
+    setLoadedTool,
+    trackerOnAbort,
+    trackerOnComplete,
+    trackerOnRequest,
+    trackerOnStart,
+} from 'app/lib/gg/loadedTool';
+import { askSameTool } from 'app/features/gg/sameToolPrompt';
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
 import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
@@ -544,8 +558,24 @@ export function* initialize(): Generator<any, void, any> {
         reduxStore.dispatch(updateSenderStatus({ status }));
     });
 
+    // GGSender: loaded tool bookkeeping for the current job
+    const ggToolTracker = createTracker();
+
     controller.addListener('workflow:state', (state: WORKFLOW_STATES_T) => {
         reduxStore.dispatch(updateWorkflowState({ state }));
+        // GGSender: a job stopped in the middle of a tool change leaves an
+        // unknown tool in the spindle
+        if (state === 'idle' && trackerOnAbort(ggToolTracker)) {
+            setLoadedTool(null);
+        }
+    });
+
+    // GGSender: the tool change finished and the job is resuming
+    controller.addListener('gg:toolchange:complete', () => {
+        const tool = trackerOnComplete(ggToolTracker);
+        if (tool !== undefined) {
+            setLoadedTool(tool);
+        }
     });
 
     controller.addListener(
@@ -712,7 +742,51 @@ export function* initialize(): Generator<any, void, any> {
             );
 
             const { option, count } = context;
+
+            // GGSender: is the requested tool the one already in the spindle?
+            trackerOnRequest(ggToolTracker, count);
+            const usesWizard = [
+                'Standard Re-zero',
+                'Flexible Re-zero',
+                'Fixed Tool Sensor',
+            ].includes(option);
+            if (usesWizard) {
+                let decision = decideSameTool({
+                    requested: context.tool,
+                    loaded: getLoadedTool().tool,
+                    policy: getSameToolPolicy(),
+                });
+                if (decision === 'ask') {
+                    const keepTool = await askSameTool({
+                        tool: normalizeTool(context.tool),
+                        since: getLoadedTool().since,
+                        comment,
+                    });
+                    decision = keepTool ? 'skip' : 'run';
+                }
+                if (decision === 'skip') {
+                    toast.info(
+                        `T${normalizeTool(context.tool)} is already loaded - tool change skipped`,
+                        { position: 'bottom-right' },
+                    );
+                    // Same line the wizards end with: resumes the job
+                    controller.command('gcode', ['%toolchange_complete']);
+                    return;
+                }
+            }
+            // If the first M6 of this job was skipped no length reference
+            // was taken, so this change must probe the old tool first.
+            const ggCount = effectiveToolChangeCount(
+                count,
+                ggToolTracker.referenceTaken,
+            );
+
             if (option === 'Pause') {
+                // GGSender: a plain pause has no "finished" signal; take the
+                // requested tool as fitted once the user resumes
+                if (normalizeTool(context.tool) !== null) {
+                    setLoadedTool(context.tool);
+                }
                 const msg =
                     'Toolchange pause' + (comment ? ` - ${comment}` : '');
                 if (!skipDialog) {
@@ -726,17 +800,24 @@ export function* initialize(): Generator<any, void, any> {
                     instructions = manualToolChange;
                 } else if (option === 'Flexible Re-zero') {
                     title = 'Flexible Re-zero Tool Change';
-                    instructions = semiautoToolChange(count);
+                    instructions = semiautoToolChange(ggCount);
                 } else if (option === 'Fixed Tool Sensor') {
                     title = 'Fixed Tool Sensor Tool Change';
                     instructions = await determineFixedSensorInstructions(
-                        count,
+                        ggCount,
                         comment,
                     );
                 } else {
                     console.error('Invalid toolchange option passed');
                     return;
                 }
+
+                // GGSender: remember what this change will leave in the spindle
+                trackerOnStart(
+                    ggToolTracker,
+                    context.tool,
+                    option !== 'Standard Re-zero',
+                );
 
                 if (instructions.onStart) {
                     const onStart = instructions.onStart();

@@ -65,6 +65,7 @@ export interface ControllerListeners {
     'serialport:write': Array<Function>;
     'gcode:loaded': Array<Function>; // TO BE DEPRECATED
     'gcode:toolChange': Array<Function>;
+    'gg:toolchange:complete': Array<Function>; // GGSender
     'feeder:status': Array<Function>;
     'feeder:pause': Array<Function>;
     'workflow:pause': Array<Function>;
@@ -178,6 +179,7 @@ class Controller {
         'serialport:write': [],
         'gcode:loaded': [], // TO BE DEPRECATED
         'gcode:toolChange': [],
+        'gg:toolchange:complete': [], // GGSender
         'feeder:status': [],
         'feeder:pause': [],
         'workflow:pause': [],
