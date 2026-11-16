@@ -7,8 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import store from 'app/store';
-import { getLoadedTool, normalizeTool, setLoadedTool } from 'app/lib/gg/loadedTool';
-import { formatSince } from 'app/features/gg/sameToolPrompt';
+import { formatSince, getLoadedTool, normalizeTool, setLoadedTool } from 'app/lib/gg/loadedTool';
 
 export const LoadedToolIndicator = () => {
     const [loaded, setLoaded] = useState(getLoadedTool());

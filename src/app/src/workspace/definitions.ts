@@ -57,7 +57,6 @@ export interface Workspace {
         spindleOverrideStep: string;
         feedOverrideStep: string;
         loadedTool: { tool: string | null; since: number | null };
-        sameToolPolicy: string;
         preflightOnLoad: string;
         preflightHidden: string;
         operationsPanel: boolean;

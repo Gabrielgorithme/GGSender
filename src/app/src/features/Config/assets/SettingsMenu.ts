@@ -1997,30 +1997,6 @@ export const SettingsMenu: SettingsMenuSection[] = [
                     },
                     // GGSender additions ------------------------------------
                     {
-                        label: 'When the requested tool is already loaded',
-                        type: 'select',
-                        key: 'workspace.gg.sameToolPolicy',
-                        options: [
-                            'Ask',
-                            'Continue without asking',
-                            'Always run tool change',
-                        ],
-                        defaultValue: 'Ask',
-                        description:
-                            'GGSender: what to do when a program asks for the tool shown as loaded in the top bar.\n\n"Ask" offers to continue without a tool change.\n\n"Continue without asking" skips the tool change.\n\n"Always run tool change" is the upstream behaviour.',
-                        hidden: (getPending) => {
-                            const strategy = getPending(
-                                'workspace.toolChangeOption',
-                                '',
-                            );
-                            return (
-                                strategy === 'Ignore' ||
-                                strategy === 'Pause' ||
-                                strategy === 'Code'
-                            );
-                        },
-                    },
-                    {
                         label: 'Send tool numbers to controller',
                         type: 'boolean',
                         key: 'workspace.toolChange.sendToolNumber',

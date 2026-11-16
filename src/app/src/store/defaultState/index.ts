@@ -87,7 +87,6 @@ const defaultState: State = {
                 tool: null,
                 since: null,
             },
-            sameToolPolicy: 'Ask',
         },
         toolChange: {
             passthrough: false,
