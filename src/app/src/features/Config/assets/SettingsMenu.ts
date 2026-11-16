@@ -272,6 +272,14 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         description:
                             "GGSender: list the file's operations (the names Fusion writes as comments) grouped by tool change, with the one running, those done and those to come, and the time to the next tool change. Off, or for a file without such comments: upstream gSender's tool timeline.",
                     },
+                    {
+                        label: 'Tool drawing at tool change',
+                        key: 'workspace.gg.toolDrawing',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            "GGSender: next to the tool number in the tool change window, draw the tool from the file's tool table (Fusion's \"T5 D=6 CR=0 - flat end mill\" comments) with its diameter, corner radius, taper, deepest Z and the operations it is for.",
+                    },
                     // --------------------------------------------------------
                     {
                         label: 'Check file on load',

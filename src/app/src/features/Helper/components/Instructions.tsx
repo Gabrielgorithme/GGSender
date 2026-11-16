@@ -29,6 +29,7 @@ import Substep from 'app/features/Helper/components/Substep';
 import ToolRequirementBanner from 'app/features/Helper/components/ToolRequirementBanner';
 import PendingToolchangeNotice from 'app/features/Helper/components/PendingToolchangeNotice';
 import ResumingJobNotice from 'app/features/Helper/components/ResumingJobNotice';
+import WithToolDrawing from 'app/features/gg/ToolChangeCard'; // GGSender
 
 const getToolLabel = (toolchangeContext: Record<string, unknown> | null): string | null => {
     const backendTool =
@@ -97,10 +98,13 @@ const Instructions = () => {
                 </div>
             )}
             {substep.toolBanner && (
-                <ToolRequirementBanner
-                    toolLabel={toolLabel}
-                    comment={toolchangeComment}
-                />
+                // GGSender: drawing of the tool beside the banner, from the file's tool table
+                <WithToolDrawing toolLabel={toolLabel} toolchangeContext={toolchangeContext}>
+                    <ToolRequirementBanner
+                        toolLabel={toolLabel}
+                        comment={toolchangeComment}
+                    />
+                </WithToolDrawing>
             )}
 
             <Substep
