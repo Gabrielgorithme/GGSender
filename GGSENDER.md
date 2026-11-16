@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.4.1**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.5.0**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -139,6 +139,68 @@ a simulated board that answers like Grbl: `ok` per line, a status report per `?`
 that no T word reaches the board. Extend it when changing anything in the stream path.
 
 ## Change log
+
+### 0.5.0 (on gSender 1.6.4)
+
+**Operations list in the 3D view.** The operations of the loaded file, read from the comments Fusion
+writes (`(3D Adaptive Roughing1)` before each operation), grouped under the tool change they follow,
+in the top-left corner of the 3D view. Each tool group shows a small outline of the tool, `T45`,
+`⌀4 R0.5 bullnose end mill` and its time; each operation its time. While a job runs: ✓ done (grey),
+▶ running (highlighted, with a bar for how far through it is), the rest to come; the header reads
+`6/11` and *Next tool change: T20 in ~6 min*. Clicking an operation shows its first move in the 3D
+view (same as clicking the toolpath). The header collapses the list to one line. Replaces the
+upstream tool timeline (top-left, `T45` cards) when the file has operations; setting *Operations list
+in the 3D view* (`workspace.gg.operationsPanel`, default on) brings the upstream timeline back.
+- How operations are found (`lib/gg/jobOperations.ts`): a run of comment-only lines after the
+  header starts one. A comment run right after an M6 that already had a name before it is the tool's
+  description, not an operation. A comment with no move before the next one (a manual NC note before
+  an M0) becomes a note of the next operation. Tool table comments (`T5 D=6 ...`) are never
+  operations. Works for any program with comment names, not only Fusion's.
+- Where the job is: gSender's own running-line estimate (`currentLineRunning`, the one the progress
+  percentage and the grey toolpath use), falling back to the lines the controller acknowledged.
+  Both count non-blank lines, which is how the server's Sender numbers them; the analysis keeps that
+  numbering (`seq`). `lib/gg/jobProgress.ts`.
+- Times are gSender's estimate summed per operation and per tool group (one estimate per line with
+  code; checked to line up exactly with the 60 627 code lines of the owner's file). The time to the
+  next tool change divides by the feed override. As good as gSender's total estimate, no better.
+
+**Tool drawing at tool change.** In the tool change window, beside the green *Install New Tool / T43*
+banner: a side view of the tool drawn from the tool table Fusion writes at the top of the program
+(`(T43 D=4 CR=0 TAPER=45deg - ZMIN=-0.35 - chamfer mill)`), with the diameter, corner radius and
+taper angle dimensioned, the type, *Cuts down to Z-0.35* (Fusion's ZMIN), and the operations this
+tool is fitted for (*For 2 operations: 2D Contour2, Bore1*). Same tool fitted twice in a job (T40 in
+the owner's file): the operations come from the M6 line the job stopped at, so each change lists its
+own. Setting *Tool drawing at tool change* (`workspace.gg.toolDrawing`, default on). Shown in the
+wizard steps that show the banner (Fixed Tool Sensor, Standard and Flexible Re-zero); not with the
+*Pause* strategy, which has no window.
+- Shapes (`lib/gg/toolProfile.ts`): flat, bull nose, ball, chamfer, tapered, lollipop, thread mill,
+  drill; spot/centre drills, countersinks and engraving tools as chamfer; anything else as a plain
+  body with its diameter. Schematic: the tip and diameter follow the numbers; flute length, neck and
+  shank are not in the file and are drawn at fixed proportions. All tools are drawn at the same
+  size; the ⌀ label tells them apart.
+- Fusion's definitions used: TAPER is the half angle from the axis (45deg = 90° tool). Chamfer mill:
+  D is the top of the cone; the tip diameter is not in the file, so the tip is drawn pointed. Tapered
+  mill: D is measured at the tip (the corner arc is centred at D/2 - CR) and the flank leaves the arc
+  tangent. The tapered-mill definition comes from Autodesk forum answers, not from Autodesk's
+  reference page, which could not be reached from the development session.
+
+Files: `lib/gg/toolSpec.ts`, `jobOperations.ts`, `jobProgress.ts`, `jobInfoStore.ts`,
+`toolProfile.ts`; `features/gg/JobOperations.tsx`, `ToolDrawing.tsx`, `ToolChangeCard.tsx`,
+`useStoreSetting.ts`. Hooks: the visualize worker (`analyzeJob` beside `analyzeProgram`),
+`Visualize.response.js`, `PrimaryVisualizer.tsx` (in place of `{timeline}`), the wizard's
+`Instructions.tsx` (around `ToolRequirementBanner`).
+
+Tests added: tool table parsing (all seven tool types of the owner's sample file), operation finding
+on the owner's two files (one trimmed to its structure, `lib/gg/__tests__/fixtures/`) and on other
+layouts (tool description after M6, name after M6, manual NC notes, no M6, semicolon comments,
+inches, CRLF), sender numbering, durations, job position, same tool twice, the drawing geometry
+(arc radii, tapered flank tangent to the corner arc), the panel, the card, and the card inside the
+real wizard step. The built app was started headless in a browser with the owner's full file: the
+list appears, with the times above.
+
+Not checked: nothing run on Windows or on the machine. No job was run, so the running/done marks and
+the time to the next tool change were only checked in tests against a simulated sender status; the
+tool change window was only rendered in tests, never opened by a real M6.
 
 ### 0.4.1 (on gSender 1.6.4)
 
@@ -313,6 +375,27 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
+## To check on the machine after installing 0.5.0
+
+Air cut or spindle off for the job parts.
+
+1. Title bar shows `GGSender 0.5.0 (gSender 1.6.4)`.
+2. Load a Fusion file: the *Operations* list is in the top-left corner of the 3D view (close the
+   pre-flight panel if it opened over it). Operations and tools match the Fusion setup; times add
+   up to about gSender's estimated time.
+3. Click an operation: its first move is highlighted in the 3D view.
+4. Start the job: the first operation is marked ▶, its bar grows. Over an operation boundary with the
+   same tool (e.g. Flat1 → Parallel1) the mark moves within a few seconds of the machine starting the
+   new operation. *Next tool change* counts down.
+5. At the first tool change (Fixed Tool Sensor): the window shows the drawing beside *Install New
+   Tool*, with the right diameter, corner radius or angle, *Cuts down to*, and the operations for that
+   tool.
+6. In a file with the same tool fitted twice (T40 in the sample), the second change lists only its
+   own operations.
+7. Settings: turn *Operations list in the 3D view* off: the upstream tool timeline is back. Turn
+   *Tool drawing at tool change* off: the tool change window is as upstream.
+8. Stop the job half way: the marks disappear; the list is back to its idle look.
+
 ## To check on the machine after installing 0.4.0
 
 1. Title bar shows `GGSender 0.4.0 (gSender 1.6.4)`.
@@ -364,6 +447,8 @@ Do these with the spindle off or as an air cut first.
 - Editable tool-change sequences (text templates instead of code).
 - Air-cut mode (temporary Z offset).
 - Publish each build as a release with `app.asar` attached; optional Windows installer built by CI.
+- Operations list: highlight an operation's whole toolpath in the 3D view on hover; start the job
+  from a chosen operation (needs the modal-state rebuild above).
 
 ## Open problem
 
