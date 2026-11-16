@@ -15,6 +15,9 @@ import { FaFeatherAlt } from 'react-icons/fa';
 import cx from 'classnames';
 import { Tooltip } from 'app/components/Tooltip';
 import GcodeEditor from './GcodeEditor';
+// GGSender
+import PickCard from 'app/features/gg/PickCard';
+import PreflightControl from 'app/features/gg/PreflightPanel';
 import { Actions, State } from './definitions';
 
 interface Props {
@@ -141,6 +144,10 @@ const PrimaryVisualizer = ({
                     <WorkspaceSelector />
 
                     {timeline}
+
+                    {/* GGSender: picked G-code line, pre-flight check */}
+                    <PickCard />
+                    <PreflightControl />
 
                     {isEditorMounted && (
                         <div

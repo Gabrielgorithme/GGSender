@@ -239,9 +239,22 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         key: 'workspace.gg.feedOverrideStep',
                         type: 'select',
                         options: ['1', '2', '5', '10'],
-                        defaultValue: '10',
+                        defaultValue: '1',
                         description:
                             'GGSender: size of one step of the feed override slider and its +/- buttons, in percent.',
+                    },
+                    {
+                        label: 'Pre-flight check on file load',
+                        key: 'workspace.gg.preflightOnLoad',
+                        type: 'select',
+                        options: [
+                            'When there are warnings',
+                            'Every file',
+                            'Never',
+                        ],
+                        defaultValue: 'When there are warnings',
+                        description:
+                            'GGSender: when to open the pre-flight panel by itself after loading a file. It can always be opened with the CHK button in the 3D view.',
                     },
                     // --------------------------------------------------------
                     {
