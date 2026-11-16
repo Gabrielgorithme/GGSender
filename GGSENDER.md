@@ -7,8 +7,8 @@ This file is the entry point for whoever edits this fork next, human or AI. It c
 changed and why, how to build and install, the traps, and what is still to do.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.3.0**, set in `src/app/src/gg-build.json`.
-- Branches: one branch per build, each on top of the previous one (`gg/0.1.0`, `gg/0.2.0-diag`, `gg/0.3.0`), with a pull request into the one below. `gg/main` is untouched 1.6.4 until those are merged.
+- Fork build: **0.4.0**, set in `src/app/src/gg-build.json`.
+- Branches: one branch per build, each on top of the previous one (`gg/0.1.0`, `gg/0.2.0-diag`, `gg/0.3.0`, `gg/0.4.0`), with a pull request into the one below. `gg/main` is untouched 1.6.4 until those are merged.
 - Not supported by Sienci Labs. Do not report problems with this build to them.
 
 ## Rules for editing
@@ -77,8 +77,15 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
   archive keeps the official `node_modules`.
 - **The Sentry build plugin can stall the build** when no token is set. `vite.config.js` now loads
   it only when `SENTRY_AUTH_TOKEN` exists.
-- **`tsc` reports about 2600 type errors in upstream code.** The build does not type-check. Compare
-  the error list before and after a change instead of expecting zero.
+- **Type-check with `scripts/gg/typecheck.sh`, not `node_modules/.bin/tsc`.** The `tsc` there is
+  TypeScript 3.9 (pulled in by another package); it stops at syntax errors in type declarations and
+  never checks gSender's code. The script uses TypeScript 5.4.5: upstream has about 740 errors, the
+  fork's own files must have none, and the script fails if they do.
+- **The toolpath is one continuous line.** `GCodeVisualizer.js` draws all vertices as a single
+  `THREE.Line`. A straight move adds 2 vertices, an arc 5 to 26. Anything that walks the vertices
+  (the toolpath picker) must not assume pairs.
+- **Settings saved by an earlier build win over new defaults.** To change a default for existing
+  installs, add a step to `lib/gg/migrations.ts`.
 - **Methods called without their object.** `surfacingGcodeGenerator.js` destructures methods from
   `this` and calls them bare. A method that uses `this` must be an arrow property there. The
   surfacing tests catch this.
@@ -129,6 +136,55 @@ a simulated board that answers like Grbl: `ok` per line, a status report per `?`
 that no T word reaches the board. Extend it when changing anything in the stream path.
 
 ## Change log
+
+### 0.4.0 (on gSender 1.6.4)
+
+**Click the toolpath to find its line, and the reverse.**
+A click (not a drag) on the toolpath in the 3D view selects the G-code line that drew the nearest
+segment within 8 px. That line's motion is highlighted in pink, with a white dot at its start and a
+pink one at its end. A card at the bottom of the view shows the line with two lines either side;
+◀ ▶ step to the previous or next line with motion, *Go to line* jumps, *Editor* opens the editor
+there, Esc or ✕ clears. A line without motion shows where the tool is at that point. In the G-code
+editor, clicking a line number shows that line in the 3D view; this is off while the editor has
+unsaved edits, since the view still shows the saved file.
+How: the visualize worker records, for each entry of `frames`, the file line it came from
+(`frameLines`), counting lines exactly as the editor does. The lookups are binary searches in
+`lib/gg/toolpathPick.ts`; the click handling and highlight are in `features/gg/ToolpathPicker.js`.
+Only the main 3D view; not the surfacing preview.
+
+**Pre-flight check.**
+Every loaded file is analysed in the visualize worker (`lib/gg/preflight.ts`). A *CHK* button in
+the 3D view opens the report, with a badge counting warnings and errors. Setting *Pre-flight check on
+file load* (`workspace.gg.preflightOnLoad`): open by itself *When there are warnings* (default),
+*Every file*, or *Never*. Line numbers in the report show the line in the 3D view.
+- Per tool: lines, deepest and highest Z cut, highest Z reached, highest feed, spindle speeds.
+- File checks: feed move before any F (error:22), feed below Z0 with the spindle off, rapid ending
+  below Z0, cutting before the first tool change, M6 without a tool number, change to the tool
+  already in use, tool numbers above 255, G53, G28/G30, G92, mixed G20/G21.
+- Machine checks (`lib/gg/preflightContext.ts`), recomputed live, so setting a new zero updates
+  them: job extents in machine coordinates against `$130`–`$132` (needs homing), spindle speed above
+  `$30`, tool changes with the *Ignore* strategy, tool numbers above 255 when they are sent, the
+  first tool against the loaded tool, feed rules that will change this program.
+- Travel sides: an axis is taken to run [-travel, 0] unless the machine reports a clearly positive
+  position on it, then [0, travel]. With the machine at 0 on an axis (just homed) the side cannot be
+  told; an excess that would fit on the other side is a warning ("at 0: unsure"), not an error.
+- Z extents are for the tool now in the spindle; after a tool change work Z shifts by the length
+  difference.
+- Limits: arcs outside XY count only their end points; after G53/G28/G30 positions are unknown
+  until set again; probing moves are not counted.
+
+**Feed override in 1% steps by default.** The default of *Feed override step* is now 1, and a
+one-time settings update (`lib/gg/migrations.ts`) sets it to 1 for installs that saved 10 under
+0.3.0. The spindle step stays as set.
+
+**`scripts/gg/typecheck.sh`.** See Traps.
+
+Tests added: line lookup and screen picking (including arcs), the picker against a real three.js
+camera, the worker's line table, the pick card and editor link, the analyzer, the machine checks,
+the panel, the settings update.
+
+Not checked: nothing run on Windows or on the machine; the picking was tested against computed
+camera matrices, not in the running app.
 
 ### 0.3.0 (on gSender 1.6.4)
 
@@ -245,6 +301,19 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
+## To check on the machine after installing 0.4.0
+
+1. Title bar shows `GGSender 0.4.0 (gSender 1.6.4)`.
+2. Feed override +/- move 1%.
+3. Load a file: if it has warnings, the pre-flight panel opens. The *CHK* button opens it anyway.
+   Per-tool table matches what you know of the file.
+4. Home, set the zero, open CHK: the travel table shows machine coordinates that make sense. Move
+   the zero so the job runs off the bed: the axis turns red.
+5. Click a cut in the 3D view: the pink highlight and the card show the right line. Rotate and pan
+   the view: no line is selected by dragging.
+6. Click a line number in the G-code editor: the view shows that line.
+7. Click a line in the pre-flight report: same.
+
 ## To check on the machine after installing 0.3.0
 
 1. Title bar shows `GGSender 0.3.0 (gSender 1.6.4)`.
@@ -278,13 +347,9 @@ Do these with the spindle off or as an air cut first.
 
 ## Still to do (agreed with the owner)
 
-- Click a point of the toolpath in the 3D view to find its G-code line, and the reverse. The
-  visualizer already keeps a table from line number to vertex (`frames` in `GCodeVisualizer.js`),
-  used to grey out the part already cut, so both directions are a lookup plus a ray cast.
 - A panel for the feed rules next to the override sliders, if Settings cannot be opened mid-job.
 - Start from a chosen tool change, rebuilding modal state.
 - Editable tool-change sequences (text templates instead of code).
-- Pre-flight check on file load (tools, Z range per tool, travel limits).
 - Air-cut mode (temporary Z offset).
 - Publish each build as a release with `app.asar` attached; optional Windows installer built by CI.
 
