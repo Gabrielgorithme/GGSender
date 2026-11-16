@@ -27,6 +27,7 @@ import { ArcCurve } from 'three';
 import GCodeVirtualizer, { rotateAxis } from 'app/lib/GCodeVirtualizer';
 import { BasicPosition } from 'app/definitions/general';
 import { analyzeProgram } from 'app/lib/gg/preflight'; // GGSender
+import { analyzeJob } from 'app/lib/gg/jobOperations'; // GGSender
 import { VISUALIZER_TYPES_T } from 'app/features/Visualizer/definitions';
 import {
     BACKGROUND_PART,
@@ -1173,6 +1174,15 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
             ggPreflight = null;
         }
     }
+    // GGSender: operations and tool table read from the program's comments
+    let ggJob = null;
+    if (!isSecondary) {
+        try {
+            ggJob = analyzeJob(content, estimates);
+        } catch (e) {
+            ggJob = null;
+        }
+    }
     const compactColorArray = toCompactFloat32Array(colorArray);
     const compactSavedColorsArray = toCompactFloat32Array(savedColorsArray);
 
@@ -1216,6 +1226,7 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
         frameLines: ArrayBuffer; // GGSender
         frameLinesLen: number; // GGSender
         ggPreflight: any; // GGSender
+        ggJob: any; // GGSender
         colorArrayBuffer: ArrayBuffer;
         colorLen: number;
         savedColorsBuffer: ArrayBuffer;
@@ -1243,6 +1254,7 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
         frameLines: compactFrameLines.buffer, // GGSender
         frameLinesLen: tFrameLines.length, // GGSender
         ggPreflight, // GGSender
+        ggJob, // GGSender
         colorArrayBuffer: compactColorArray.buffer,
         colorLen: colorArray.length,
         savedColorsBuffer: compactSavedColorsArray.buffer,
