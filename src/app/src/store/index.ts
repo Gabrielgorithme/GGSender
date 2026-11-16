@@ -20,6 +20,7 @@ import { defaultATCIMacros } from '../features/ATC/assets/defaultATCIMacros';
 import api from 'app/api';
 import pubsub from 'pubsub-js';
 import { BackupFrequencies } from 'app/workspace/definitions';
+import { applyGGMigrations } from 'app/lib/gg/migrations';
 
 interface UserData {
     path: string;
@@ -327,6 +328,12 @@ try {
 
 const mergedState = merge(JSON.parse(JSON.stringify(defaultState)), cnc.state || {});
 store.state = normalizeState(preserveSavedCommandKeys(mergedState, cnc.state || {}));
+
+// GGSender: one-time updates to settings saved by earlier GGSender builds
+applyGGMigrations(
+    (key, fallback) => store.get(key, fallback),
+    (key, value) => store.set(key, value),
+);
 
 // Debouncing enforces that a function not be called again until a certain amount of time (e.g. 100ms) has passed without it being called.
 store.on(

@@ -39,9 +39,9 @@ const fineFeedHandler = debounce((value) => {
     controller.command('feedOverride', Number(value));
 }, FINE_STEP_DELAY);
 
-export const readOverrideStep = (key: string): number => {
-    const step = Number(store.get(key, 10));
-    return [1, 2, 5, 10].includes(step) ? step : 10;
+export const readOverrideStep = (key: string, fallback = 10): number => {
+    const step = Number(store.get(key, fallback));
+    return [1, 2, 5, 10].includes(step) ? step : fallback;
 };
 
 let globalOvTimestamp = 0;
@@ -85,7 +85,7 @@ const Overrides: React.FC<OverridesProps> = ({
         readOverrideStep('workspace.gg.spindleOverrideStep'),
     );
     const [feedStep, setFeedStep] = useState(
-        readOverrideStep('workspace.gg.feedOverrideStep'),
+        readOverrideStep('workspace.gg.feedOverrideStep', 1),
     );
     const sendSpindle =
         spindleStep < 10 ? fineSpindleHandler : debouncedSpindleHandler;
@@ -101,7 +101,7 @@ const Overrides: React.FC<OverridesProps> = ({
 
     const handleStoreChange = () => {
         setSpindleStep(readOverrideStep('workspace.gg.spindleOverrideStep'));
-        setFeedStep(readOverrideStep('workspace.gg.feedOverrideStep'));
+        setFeedStep(readOverrideStep('workspace.gg.feedOverrideStep', 1));
         setShowSpindleOverride(store.get('workspace.spindleFunctions'));
         setSpindleOverrideLabel(
             store.get('widgets.spindle.mode', SPINDLE_MODE) === SPINDLE_MODE

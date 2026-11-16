@@ -58,6 +58,8 @@ export interface Workspace {
         feedOverrideStep: string;
         loadedTool: { tool: string | null; since: number | null };
         sameToolPolicy: string;
+        preflightOnLoad: string;
+        settingsVersion: number;
     };
     toolChange: {
         passthrough: boolean;

@@ -76,7 +76,9 @@ const defaultState: State = {
         // GGSender additions
         gg: {
             spindleOverrideStep: '10',
-            feedOverrideStep: '10',
+            feedOverrideStep: '1',
+            preflightOnLoad: 'When there are warnings',
+            settingsVersion: 0,
             // Tool gSender believes is in the spindle; null = unknown
             loadedTool: {
                 tool: null,
