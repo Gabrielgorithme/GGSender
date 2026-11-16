@@ -96,6 +96,11 @@ import {
 	stripToolWord,
 } from "../../lib/gg/toolWord";
 import {
+	attachStreamDiagnostics,
+	noteCommand,
+	noteOkElsewhere,
+} from "../../lib/gg/streamDiagnostics";
+import {
 	GCODE_TRANSLATION_TYPE,
 	translateGcode,
 } from "../../lib/gcode-translation";
@@ -837,6 +842,7 @@ class GrblController {
 					this.emit("serialport:read", res.raw);
 				}
 				this.actionMask.queryParserState.reply = false;
+				noteOkElsewhere(this, "$G reply"); // GGSender
 
 				if (this.forceOK) {
 					this.forceOK = false;
@@ -860,6 +866,7 @@ class GrblController {
 			}
 
 			if (this.workflow.state === WORKFLOW_STATE_PAUSED && received < sent) {
+				noteOkElsewhere(this, "paused job"); // GGSender
 				this.emit("serialport:read", res.raw);
 				if (!hold) {
 					log.error("The sender does not hold off during the paused state");
@@ -877,6 +884,7 @@ class GrblController {
 			this.emit("serialport:read", res.raw);
 
 			// Feeder
+			noteOkElsewhere(this, "feeder"); // GGSender
 			this.feeder.ack();
 			this.feeder.next();
 		});
@@ -1193,6 +1201,9 @@ class GrblController {
 				this.connection.writeImmediate("$G\n");
 			}
 		}, 500);
+
+		// GGSender: stream diagnostics into the traffic log (read-only)
+		attachStreamDiagnostics(this);
 
 		this.queryTimer = setInterval(() => {
 			if (this.isClose()) {
@@ -1626,6 +1637,7 @@ class GrblController {
 
 	// eslint-disable-next-line max-lines-per-function
 	command(cmd, ...args) {
+		noteCommand(this, cmd, args); // GGSender: traffic log
 		const handler = {
 			"firmware:recievedProfiles": () => {
 				let [files] = args;

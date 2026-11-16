@@ -6,6 +6,8 @@ import {
 } from '../controllers/Grblhal/constants';
 import { GRBL, GRBL_REALTIME_COMMANDS } from '../controllers/Grbl/constants';
 import logger from './logger';
+// GGSender: persistent traffic log
+import { logRx, logTx } from './gg/trafficLog';
 import { noop, includes } from 'lodash';
 import { WRITE_SOURCE_CLIENT } from '../controllers/constants';
 
@@ -37,6 +39,7 @@ class Connection extends EventEmitter {
 
     connectionEventListener = {
         data: (data) => {
+            logRx(data); // GGSender
             this.emit('data', data);
             log.silly(`< ${data}`);
             if (this.controllerType === null) {
@@ -312,6 +315,7 @@ class Connection extends EventEmitter {
         if (!context) {
             context = { source: WRITE_SOURCE_CLIENT };
         }
+        logTx(data, context.source); // GGSender
         this.connection.write(data, context);
         log.silly(`> ${data}`);
     }
@@ -328,6 +332,7 @@ class Connection extends EventEmitter {
     }
 
     writeImmediate(data) {
+        logTx(data, 'immediate'); // GGSender
         this.connection.writeImmediate(data);
     }
 

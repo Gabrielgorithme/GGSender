@@ -1187,6 +1187,10 @@ export function* initialize(): Generator<any, void, any> {
             reduxStore.getState(),
             'controller.state.status.activeState',
         );
+        // GGSender: traffic log
+        controller.ggNote(
+            `job:stop received by interface: revertWorkspace=${revertWorkspace} machine=${activeState}`,
+        );
         // if revert workspace is off, set the current workspace back to what it was when the job started
         if (!revertWorkspace) {
             if (activeState === GRBL_ACTIVE_STATE_CHECK) {

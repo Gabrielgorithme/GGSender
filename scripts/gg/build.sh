@@ -3,6 +3,9 @@
 # into dist/gsender, the same layout the official build produces.
 #
 # Usage: scripts/gg/build.sh
+#        GG_READABLE_BUILD=1 scripts/gg/build.sh   # interface not minified, so
+#                                                  # stack traces in the traffic
+#                                                  # log show real function names
 # Needs: node >= 18 and the dependencies installed (see GGSENDER.md).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
