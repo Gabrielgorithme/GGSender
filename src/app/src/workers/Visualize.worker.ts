@@ -26,6 +26,7 @@ import { ArcCurve } from 'three';
 
 import GCodeVirtualizer, { rotateAxis } from 'app/lib/GCodeVirtualizer';
 import { BasicPosition } from 'app/definitions/general';
+import { analyzeProgram } from 'app/lib/gg/preflight'; // GGSender
 import { VISUALIZER_TYPES_T } from 'app/features/Visualizer/definitions';
 import {
     BACKGROUND_PART,
@@ -391,6 +392,13 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
         data: new Uint32Array(2048),
         length: 0,
     };
+    // GGSender: file line (0-based, numbered like the editor: one line per
+    // "\n") of each frames entry, so the 3D view can map a vertex to a line.
+    const frameLines: GrowableUint32Buffer = {
+        data: new Uint32Array(2048),
+        length: 0,
+    };
+    let currentFileLine = 0;
     let currentTool = 0;
     const toolchanges: number[] = [];
     const shouldBuildColors = needsVisualization && Boolean(theme);
@@ -543,6 +551,7 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
     const onData = () => {
         const vertexIndex = vertices.length / 3;
         pushUint32_1(frames, vertexIndex);
+        pushUint32_1(frameLines, currentFileLine); // GGSender
 
         currentLines++;
         if (
@@ -1053,6 +1062,10 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
         if (ch === 13 && i + 1 < contentLength && content.charCodeAt(i + 1) === 10) {
             i++;
         }
+        // GGSender: count "\n" only, like the editor's split('\n')
+        if (content.charCodeAt(i) === 10) {
+            currentFileLine++;
+        }
         lineStart = i + 1;
     }
 
@@ -1078,6 +1091,7 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
 
     markProfile(profiler, 'before_typed_array_build');
     const tFrames = toUsedUint32View(frames);
+    const tFrameLines = toUsedUint32View(frameLines); // GGSender
     const tVertices = toUsedFloat32View(vertices);
     const compactSpindleFrameSpeeds = isLaser
         ? toCompactFloat32Array(toUsedFloat32View(spindleFrameSpeeds))
@@ -1148,6 +1162,17 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
 
     const compactVertices = toCompactFloat32Array(tVertices);
     const compactFrames = toCompactUint32Array(tFrames);
+    const compactFrameLines = toCompactUint32Array(tFrameLines); // GGSender
+
+    // GGSender: pre-flight analysis of the program (primary file only)
+    let ggPreflight = null;
+    if (!isSecondary) {
+        try {
+            ggPreflight = analyzeProgram(content);
+        } catch (e) {
+            ggPreflight = null;
+        }
+    }
     const compactColorArray = toCompactFloat32Array(colorArray);
     const compactSavedColorsArray = toCompactFloat32Array(savedColorsArray);
 
@@ -1188,6 +1213,9 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
         frames: ArrayBuffer;
         verticesLen: number;
         framesLen: number;
+        frameLines: ArrayBuffer; // GGSender
+        frameLinesLen: number; // GGSender
+        ggPreflight: any; // GGSender
         colorArrayBuffer: ArrayBuffer;
         colorLen: number;
         savedColorsBuffer: ArrayBuffer;
@@ -1212,6 +1240,9 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
         frames: compactFrames.buffer,
         verticesLen: tVertices.length,
         framesLen: tFrames.length,
+        frameLines: compactFrameLines.buffer, // GGSender
+        frameLinesLen: tFrameLines.length, // GGSender
+        ggPreflight, // GGSender
         colorArrayBuffer: compactColorArray.buffer,
         colorLen: colorArray.length,
         savedColorsBuffer: compactSavedColorsArray.buffer,
@@ -1235,6 +1266,7 @@ self.onmessage = function ({ data }: { data: WorkerData }) {
     const transferList: ArrayBuffer[] = [
         compactVertices.buffer,
         compactFrames.buffer,
+        compactFrameLines.buffer, // GGSender
         compactColorArray.buffer,
         compactSavedColorsArray.buffer,
     ];

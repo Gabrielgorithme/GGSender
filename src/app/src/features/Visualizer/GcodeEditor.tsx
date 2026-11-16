@@ -36,6 +36,13 @@ import {
     a11yDark,
 } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Input } from 'app/components/shadcn/Input';
+import pubsub from 'pubsub-js';
+// GGSender: link editor lines and the 3D view
+import {
+    PICK_CHANGED,
+    getCurrentPick,
+    requestPickLine,
+} from 'app/features/gg/pickTopics';
 
 type LineStatus = 'processed' | 'current' | 'upcoming' | 'none';
 
@@ -54,6 +61,9 @@ interface GcodeEditorLineProps {
     handleCheckboxClick: (index: number, e: React.MouseEvent) => void;
     handleLineChange: (index: number, value: string) => void;
     setEditingLineIndex: React.Dispatch<React.SetStateAction<number | null>>;
+    // GGSender
+    isPicked?: boolean;
+    onShowIn3D?: (index: number) => void;
 }
 
 const GcodeEditorLine = React.memo(({
@@ -71,6 +81,8 @@ const GcodeEditorLine = React.memo(({
     handleCheckboxClick,
     handleLineChange,
     setEditingLineIndex,
+    isPicked = false,
+    onShowIn3D,
 }: GcodeEditorLineProps) => {
     const getLineStatusClass = () => {
         if (!isJobRunning) return '';
@@ -84,6 +96,7 @@ const GcodeEditorLine = React.memo(({
 
     const getLineClassName = () => {
         if (isCurrentMatch) return 'bg-yellow-200 dark:bg-yellow-900/40 ring-2 ring-yellow-500';
+        if (isPicked) return 'bg-pink-100 dark:bg-pink-900/40 ring-2 ring-pink-500'; // GGSender
         if (isMatch) return 'bg-yellow-50 dark:bg-yellow-900/20';
         if (isSelected) return 'bg-blue-100 dark:bg-blue-900/30';
         if (lineStatus !== 'none') return getLineStatusClass();
@@ -141,7 +154,17 @@ const GcodeEditorLine = React.memo(({
                     <div className="w-5 h-5 border-2 border-gray-400 dark:border-gray-500 rounded hover:border-blue-500" />
                 )}
             </div>
-            <span className={cn('dark:text-white mr-4 min-w-10 text-right select-none', getInnerLineClassName())}>
+            <span
+                className={cn(
+                    'dark:text-white mr-4 min-w-10 text-right select-none',
+                    getInnerLineClassName(),
+                    // GGSender: the line number shows the line in the 3D view
+                    { 'cursor-pointer hover:underline hover:text-pink-600': Boolean(onShowIn3D) },
+                )}
+                onClick={onShowIn3D ? (e) => { e.stopPropagation(); onShowIn3D(index); } : undefined}
+                title={onShowIn3D ? 'Show this line in the 3D view' : undefined}
+                data-testid={`gg-editor-line-number-${index}`}
+            >
                 {index + 1}
                 {lineStatus === 'current' && <span className="ml-1 text-xs">▶</span>}
             </span>
@@ -247,6 +270,20 @@ const GcodeEditor = ({ onClose }: GcodeEditorProps) => {
         workflowState === WORKFLOW_STATE_PAUSED;
     const currentLineRunning = senderStatus?.currentLineRunning ?? -1;
 
+    // GGSender: line picked in the 3D view
+    const [pickedLine, setPickedLine] = useState<number | null>(
+        getCurrentPick()?.line ?? null,
+    );
+    const scrolledToPickRef = useRef<number | null>(null);
+    useEffect(() => {
+        const token = pubsub.subscribe(PICK_CHANGED, (_msg, state) => {
+            setPickedLine(state ? state.line : null);
+        });
+        return () => {
+            pubsub.unsubscribe(token);
+        };
+    }, []);
+
     useEffect(() => {
         if (content) {
             const timeoutId = setTimeout(() => {
@@ -349,6 +386,34 @@ const GcodeEditor = ({ onClose }: GcodeEditorProps) => {
     }, []);
 
     const totalHeight = gcodeLines.length * LINE_HEIGHT;
+
+    // GGSender: bring the picked line into view when the editor opens or
+    // when another line is picked
+    useEffect(() => {
+        const container = scrollContainerRef.current;
+        if (
+            pickedLine === null ||
+            !container ||
+            gcodeLines.length <= pickedLine ||
+            scrolledToPickRef.current === pickedLine
+        ) {
+            return;
+        }
+        scrolledToPickRef.current = pickedLine;
+        const target =
+            pickedLine * LINE_HEIGHT - container.clientHeight / 2 + LINE_HEIGHT / 2;
+        container.scrollTo({ top: Math.max(0, target), behavior: 'auto' });
+    }, [pickedLine, gcodeLines.length]);
+
+    // GGSender: the 3D view shows the saved file; after unsaved edits the
+    // line numbers may no longer match it
+    const showIn3D = useCallback(
+        (index: number) => {
+            requestPickLine(index);
+            onClose();
+        },
+        [onClose],
+    );
 
     useEffect(() => {
         if (isJobRunning) {
@@ -834,6 +899,8 @@ const GcodeEditor = ({ onClose }: GcodeEditorProps) => {
                                     handleCheckboxClick={handleCheckboxClick}
                                     handleLineChange={handleLineChange}
                                     setEditingLineIndex={setEditingLineIndex}
+                                    isPicked={pickedLine === index}
+                                    onShowIn3D={hasChanges ? undefined : showIn3D}
                                 />
                             );
                         })}

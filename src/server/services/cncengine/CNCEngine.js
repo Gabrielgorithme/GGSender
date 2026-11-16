@@ -31,6 +31,7 @@ import fs from 'fs';
 import path from 'path';
 import EventTrigger from '../../lib/EventTrigger';
 import logger from '../../lib/logger';
+import { logEvent } from '../../lib/gg/trafficLog';
 import store from '../../store';
 import config from '../configstore';
 import taskRunner from '../taskrunner';
@@ -541,6 +542,11 @@ class CNCEngine {
                 socket.emit('serialport:close', {
                     port: port,
                 });
+            });
+
+            // GGSender: notes from the interface for the traffic log
+            socket.on('gg:log', (text) => {
+                logEvent('interface', String(text).slice(0, 4000));
             });
 
             socket.on('command', (port, cmd, ...args) => {

@@ -65,6 +65,7 @@ export interface ControllerListeners {
     'serialport:write': Array<Function>;
     'gcode:loaded': Array<Function>; // TO BE DEPRECATED
     'gcode:toolChange': Array<Function>;
+    'gg:toolchange:complete': Array<Function>; // GGSender
     'feeder:status': Array<Function>;
     'feeder:pause': Array<Function>;
     'workflow:pause': Array<Function>;
@@ -178,6 +179,7 @@ class Controller {
         'serialport:write': [],
         'gcode:loaded': [], // TO BE DEPRECATED
         'gcode:toolChange': [],
+        'gg:toolchange:complete': [], // GGSender
         'feeder:status': [],
         'feeder:pause': [],
         'workflow:pause': [],
@@ -556,10 +558,35 @@ class Controller {
     //   controller.command('macro:run', '<macro-id>', context /* optional */, callback)
     // - Load file from a watch directory
     //   controller.command('watchdir:load', '/path/to/file', callback)
+    // GGSender: a line for the server's traffic log. Sent just before the
+    // command it describes, so the two appear together in the file.
+    ggNote(text: string): void {
+        try {
+            this.socket && this.socket.emit('gg:log', text);
+        } catch (e) {
+            // diagnostics only
+        }
+    }
+
     command(cmd: string, ...args: Array<any>): void {
         const { port } = this;
         if (!port) {
             return;
+        }
+
+        // GGSender: record where every injected g-code command comes from.
+        if (cmd === 'gcode' || cmd === 'gcode:safe') {
+            try {
+                const stack = (new Error().stack || '')
+                    .split('\n')
+                    .slice(2, 9)
+                    .map((l) => l.trim())
+                    .join('\n');
+                const what = String(JSON.stringify(args[0])).slice(0, 200);
+                this.ggNote(`origin of next ${cmd} ${what}\n${stack}`);
+            } catch (e) {
+                // diagnostics only
+            }
         }
 
         const socketArgs = [port, cmd, ...args];

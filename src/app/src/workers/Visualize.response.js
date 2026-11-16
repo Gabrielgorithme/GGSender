@@ -2,6 +2,7 @@ import pubsub from 'pubsub-js';
 import { store as reduxStore } from 'app/store/redux';
 import _get from 'lodash/get';
 import isNumber from 'lodash/isNumber';
+import { setPreflight } from 'app/lib/gg/preflightStore'; // GGSender
 
 import store from 'app/store';
 import {
@@ -131,6 +132,13 @@ const handleGeometryReady = (data) => {
 
     if (data.visualizer !== VISUALIZER_SECONDARY) {
         reduxStore.dispatch(updateFileInfo(estimatePayload));
+        // GGSender: pre-flight report of the newly loaded file
+        if (data.ggPreflight) {
+            setPreflight(
+                data.ggPreflight,
+                _get(reduxStore.getState(), 'file.name', ''),
+            );
+        }
     }
 
     reduxStore.dispatch(updateFileProcessing(false));

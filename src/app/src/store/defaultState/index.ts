@@ -73,6 +73,20 @@ const defaultState: State = {
         lastBackupTime: 0,
         collectUsageDataStatus: 'pending',
         jobTimes: [],
+        // GGSender additions
+        gg: {
+            spindleOverrideStep: '10',
+            feedOverrideStep: '1',
+            preflightOnLoad: 'When there are warnings',
+            preflightHidden: '',
+            settingsVersion: 0,
+            // Tool gSender believes is in the spindle; null = unknown
+            loadedTool: {
+                tool: null,
+                since: null,
+            },
+            sameToolPolicy: 'Ask',
+        },
         toolChange: {
             passthrough: false,
             skipDialog: false,
@@ -81,6 +95,7 @@ const defaultState: State = {
             safeZ: -0.1,
             returnToStartZ: false,
             sendToolNumber: false,
+            feedRules: '',
             firstToolBehaviour: 'Always run full wizard',
             manualPosition: {
                 x: 0,

@@ -33,6 +33,7 @@ import pubsub from 'pubsub-js';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import * as THREE from 'three';
+import ToolpathPicker from 'app/features/gg/ToolpathPicker'; // GGSender
 import { degToRad } from 'three/src/math/MathUtils';
 import {
     IMPERIAL_UNITS,
@@ -686,6 +687,11 @@ class Visualizer extends Component {
     }
 
     componentWillUnmount() {
+        // GGSender
+        if (this.ggPicker) {
+            this.ggPicker.dispose();
+            this.ggPicker = null;
+        }
         this.removeControllerEvents();
         this.unsubscribe();
         this.removeResizeEventListener();
@@ -1727,6 +1733,20 @@ class Visualizer extends Component {
                 this.camera,
                 this.renderer.domElement,
             );
+
+            // GGSender: click the toolpath to find its G-code line
+            if (!this.props.isSecondary) {
+                if (!this.ggPicker) {
+                    this.ggPicker = new ToolpathPicker({
+                        getCamera: () => this.camera,
+                        getToolpath: () =>
+                            this.visualizer?.group?.getObjectByName('workpiece') ||
+                            null,
+                        render: () => this.updateScene({ forceUpdate: true }),
+                    });
+                }
+                this.ggPicker.attach(this.renderer.domElement);
+            }
 
             this.setCameraMode(state.cameraMode);
 
@@ -2879,8 +2899,22 @@ class Visualizer extends Component {
                 savedColors,
                 callback,
             );
+            // GGSender: line lookup for the picker
+            if (this.ggPicker) {
+                this.ggPicker.setData({
+                    frames: visualization.frames,
+                    frameLines: toBoundedUint32Array(
+                        vizualization.frameLines,
+                        vizualization.frameLinesLen,
+                    ),
+                    vertices: visualization.vertices,
+                });
+            }
         } else {
             setVisualizerReady();
+            if (this.ggPicker) {
+                this.ggPicker.reset(); // GGSender
+            }
         }
 
         this.fileLoaded = true;
@@ -2978,6 +3012,9 @@ class Visualizer extends Component {
 
     unload(skipClearingVis = false) {
         this.fileLoaded = false;
+        if (this.ggPicker) {
+            this.ggPicker.reset(); // GGSender: the toolpath is removed
+        }
         const visualizerObject = this.group.getObjectByName('Visualizer');
         const toolPathObject = this.group.getObjectByName('toolpath');
         const shouldZoom = this.props.isSecondary ? !this.didZoom : true;
