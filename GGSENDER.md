@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.5.0**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.5.1**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -140,6 +140,36 @@ that no T word reaches the board. Extend it when changing anything in the stream
 
 ## Change log
 
+### 0.5.1 (on gSender 1.6.4)
+
+**No more "tool already loaded" prompt.** Removed at the owner's request: when a program asks for the
+tool recorded as loaded (e.g. T45 loaded, program starts with T45), the *T45 Already Loaded* window no
+longer appears and nothing is skipped; every M6 runs its tool change exactly as upstream, including
+the "probe the initial tool" step on the first M6 of a job. Gone with it: the setting *When the
+requested tool is already loaded* (`workspace.gg.sameToolPolicy`; a saved value is ignored), and the
+0.3.0 rule that made the next change probe the old tool when the first M6 had been skipped. Kept: the
+loaded tool is still recorded after each change and shown as the `T45` chip in the top bar, and the
+pre-flight notes about it. Upstream's own *First tool behaviour* setting (Fixed Tool Sensor) is
+untouched; its *Prompt for first tool* choice shows a different window, *First Tool Change Detected*.
+Files: `lib/gg/loadedTool.ts`, `controllerSagas.tsx`; `features/gg/sameToolPrompt.tsx` deleted.
+
+**Spindle override in 1% steps by default.** Up to 0.5.0 the spindle step defaulted to 10 and only
+went finer after changing *Spindle override step* in Settings; reported as "still 10%". The default is
+now 1, and a one-time settings update moves an install still at 10 to 1 (a step of 1, 2 or 5 chosen
+earlier is kept; 10 can be chosen again for the upstream step). Also fixed: dragging the spindle slider
+and letting go off the slider showed the new value but never sent it (upstream sent it on pointer-up,
+which does not fire there; the feed slider already used pointer-capture-lost, now both do). The server
+side already sent FluidNC's 1% spindle commands (0x9C/0x9D); the simulated-board test covers that.
+Files: `features/JobControl/FeedOverride.tsx`, `lib/gg/migrations.ts`, defaults and Settings.
+
+Tests added: the real tool change handler of the controller saga with T45 loaded and T45 requested
+(wizard opens, no prompt, job not resumed; fails on 0.5.0), the initial-tool step on the first M6,
+recording the tool on completion and losing it on a stop; the override panel with default settings
+(+ sends 101, - sends 100; a drag released off the slider is sent, which fails with the upstream
+handler; step 10 still sends 110); the settings update.
+
+Not checked: nothing run on Windows or on the machine.
+
 ### 0.5.0 (on gSender 1.6.4)
 
 **Operations list in the 3D view.** The operations of the loaded file, read from the comments Fusion
@@ -270,7 +300,7 @@ It becomes unknown by itself if a job is stopped in the middle of a tool change.
 Files: `lib/gg/loadedTool.ts`, `features/gg/LoadedToolIndicator.tsx`, `controllerSagas.tsx`,
 and one `emit("gg:toolchange:complete")` in `GrblController.js`.
 
-**No forced tool change for the tool that is already loaded.**
+**No forced tool change for the tool that is already loaded.** (Removed in 0.5.1.)
 When an `M6` asks for the recorded tool, the setting *When the requested tool is already loaded*
 (`workspace.gg.sameToolPolicy`) decides: *Ask* (default), *Continue without asking*, or *Always run
 tool change* (upstream). Continuing skips the change and the probing; work Z is left as it is.
@@ -374,6 +404,18 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
+
+## To check on the machine after installing 0.5.1
+
+1. Title bar shows `GGSender 0.5.1 (gSender 1.6.4)`.
+2. The `T` chip in the top bar shows the tool fitted last. Start a program whose first tool is that
+   tool: no *Already Loaded* window; the normal tool change window opens, with the "probe initial
+   tool" step.
+3. During a job (spindle on, or air cut): the spindle override +/- buttons move 1%, the slider moves
+   in 1% steps, and the RPM shown follows a second or so later.
+4. Drag the spindle slider and let go with the pointer off the slider: the reported override follows
+   (upstream it stayed where it was).
+5. Settings, *Spindle override step*: shows 1.
 
 ## To check on the machine after installing 0.5.0
 
