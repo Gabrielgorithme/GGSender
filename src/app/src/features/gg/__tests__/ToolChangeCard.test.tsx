@@ -44,10 +44,10 @@ describe('GGSender: tool change card', () => {
         const card = screen.getByTestId('gg-toolchange-card');
         expect(within(card).getByTestId('gg-tool-drawing').getAttribute('data-kind')).toBe('chamfer');
         expect(within(card).getByText('chamfer mill')).toBeInTheDocument();
-        expect(card).toHaveTextContent('Diameter 4 mm');
+        expect(within(card).getByTestId('gg-toolchange-size')).toHaveTextContent('⌀ 4 mm');
         expect(card).toHaveTextContent('Taper 45° (90° tool)');
         expect(card).toHaveTextContent('Cuts down to Z-0.35');
-        expect(within(card).getByTestId('gg-toolchange-ops')).toHaveTextContent('For operation:Trace1');
+        expect(within(card).getByTestId('gg-toolchange-ops')).toHaveTextContent('For operation: Trace1');
         expect(within(card).getByTestId('gg-tool-dim-angle')).toBeInTheDocument();
     });
 
@@ -62,8 +62,8 @@ describe('GGSender: tool change card', () => {
             unmount();
             return text;
         };
-        expect(ops((t40[0].changeSeq as number) + 1)).toBe('For 2 operations:2D Contour2Bore1');
-        expect(ops((t40[1].changeSeq as number) + 1)).toBe('For operation:2D Contour3');
+        expect(ops((t40[0].changeSeq as number) + 1)).toBe('For 2 operations: 2D Contour2, Bore1');
+        expect(ops((t40[1].changeSeq as number) + 1)).toBe('For operation: 2D Contour3');
     });
 
     it('bull nose: corner radius shown', () => {
@@ -72,7 +72,7 @@ describe('GGSender: tool change card', () => {
                 <Banner />
             </WithToolDrawing>,
         );
-        expect(screen.getByTestId('gg-toolchange-card')).toHaveTextContent('Corner radius 0.5 mm');
+        expect(screen.getByTestId('gg-toolchange-size')).toHaveTextContent('⌀ 4 mm · R 0.5 mm');
         expect(screen.getByTestId('gg-tool-dim-radius')).toHaveTextContent('R0.5');
     });
 
@@ -116,7 +116,7 @@ describe('GGSender: tool change card', () => {
         const row = screen.getByTestId('gg-toolchange-row');
         expect(within(row).getByText('T45')).toBeInTheDocument();
         expect(within(row).getByTestId('gg-toolchange-ops')).toHaveTextContent(
-            'For 4 operations:3D Adaptive Roughing1 2Flat1Parallel1Parallel1 2',
+            'For 4 operations: 3D Adaptive Roughing1 2, Flat1, Parallel1, Parallel1 2',
         );
     });
 });

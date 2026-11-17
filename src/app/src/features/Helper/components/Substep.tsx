@@ -24,6 +24,9 @@
 import React from 'react';
 import { Info } from 'lucide-react';
 import Actions from './Actions';
+// GGSender: the step fills the window so its Run button sits at the bottom
+import { TOOLCHANGE_ENTER_KEY } from 'app/features/gg/enterToRun';
+import { useStoreSetting } from 'app/features/gg/useStoreSetting';
 
 interface WizardAction {
     label: string;
@@ -46,8 +49,9 @@ interface SubstepProps {
 }
 
 const Substep = ({ step, index, stepIndex, firstRunOnly }: SubstepProps) => {
+    const ggBig = useStoreSetting<boolean>(TOOLCHANGE_ENTER_KEY, true); // GGSender
     return (
-        <div className="flex flex-col gap-3" id={`step-${stepIndex}-${index}`}>
+        <div className={ggBig ? 'flex flex-col gap-3 flex-1' : 'flex flex-col gap-3'} id={`step-${stepIndex}-${index}`}>
             <div className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-amber-400">
                 {step.title}
             </div>

@@ -31,6 +31,14 @@ import cx from 'classnames';
 import { useWizardAPI, useWizardContext } from 'app/features/Helper/context';
 import { Terminal, CheckCircle } from 'lucide-react';
 import { useSelector } from 'react-redux';
+// GGSender: large Run button, Enter runs it
+import {
+    BIG_RUN_BUTTON,
+    ENTER_HINT,
+    TOOLCHANGE_ENTER_KEY,
+    useEnterToRun,
+} from 'app/features/gg/enterToRun';
+import { useStoreSetting } from 'app/features/gg/useStoreSetting';
 
 interface WizardAction {
     label: string;
@@ -78,6 +86,18 @@ const Actions = ({ actions = [], stepIndex, substepIndex }: ActionsProps) => {
     );
 
     const isNotIdle = () => activeState !== GRBL_ACTIVE_STATE_IDLE;
+
+    // GGSender: large Run button that Enter presses (features/gg/enterToRun.ts)
+    const ggBig = useStoreSetting<boolean>(TOOLCHANGE_ENTER_KEY, true);
+    const ggRunRef = useRef<HTMLButtonElement>(null);
+    const ggArmed =
+        ggBig &&
+        actions.length === 1 &&
+        !isLoading &&
+        !showSuccess &&
+        !steps[stepIndex]?.substeps?.[substepIndex]?.actionTaken &&
+        !isNotIdle();
+    useEnterToRun(ggRunRef, ggArmed, ggBig);
 
     // Always-current ref so the pubsub handler never reads stale props/API.
     // The subscription is registered once ([] deps) but cbRef.current is
@@ -154,12 +174,14 @@ const Actions = ({ actions = [], stepIndex, substepIndex }: ActionsProps) => {
 
     return (
         <>
-            {actions.length > 0 && (
+            {/* GGSender: the large button needs no heading */}
+            {actions.length > 0 && !ggBig && (
                 <div className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-amber-400 mb-1">
                     Run G-Code
                 </div>
             )}
-            <div className="flex flex-col gap-2">
+            {/* GGSender: mt-auto keeps the actions at the bottom of the window */}
+            <div className={ggBig ? 'flex flex-col gap-2 mt-auto pt-1' : 'flex flex-col gap-2'}>
                 {actions.map((action, index) => {
                     const cbWithCompletion = () => {
                         // Guard against a malformed wizard action. Without this
@@ -241,11 +263,17 @@ const Actions = ({ actions = [], stepIndex, substepIndex }: ActionsProps) => {
                                         </div>
                                         <button
                                             type="button"
+                                            ref={index === 0 ? ggRunRef : undefined}
                                             disabled={isNotIdle()}
                                             onClick={cbWithCompletion}
-                                            className="ml-3 shrink-0 text-sm font-medium px-3 py-1 rounded bg-blue-600 dark:bg-blue-700 hover:bg-blue-700 dark:hover:bg-blue-600 text-white disabled:opacity-35 disabled:pointer-events-none transition-colors"
+                                            className={ggBig ? BIG_RUN_BUTTON : 'ml-3 shrink-0 text-sm font-medium px-3 py-1 rounded bg-blue-600 dark:bg-blue-700 hover:bg-blue-700 dark:hover:bg-blue-600 text-white disabled:opacity-35 disabled:pointer-events-none transition-colors'}
+                                            data-testid="wizard-run"
                                         >
                                             Run
+                                            {/* GGSender: Enter runs it */}
+                                            {ggBig && actions.length === 1 && (
+                                                <kbd className={ENTER_HINT}>⏎ Enter</kbd>
+                                            )}
                                         </button>
                                     </div>
                                     {tooltip?.index === index && (

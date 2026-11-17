@@ -2086,6 +2086,25 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             );
                         },
                     },
+                    {
+                        label: 'Large Run button, Enter runs it',
+                        type: 'boolean',
+                        key: 'workspace.gg.toolChangeEnter',
+                        defaultValue: true,
+                        description:
+                            'GGSender: in the tool change window, the Run button of each step is large and sits at the bottom of the window, and Enter presses it. One step per press. Enter does nothing while a step runs, during the first 0.7 s after a step appears, when the step has already been run, while the machine is moving, or when the step offers several actions; typing in a text field is not affected. While the window is open, Enter does nothing else. Off: upstream\'s small Run button.',
+                        hidden: (getPending) => {
+                            const strategy = getPending(
+                                'workspace.toolChangeOption',
+                                '',
+                            );
+                            return (
+                                strategy === 'Ignore' ||
+                                strategy === 'Pause' ||
+                                strategy === 'Code'
+                            );
+                        },
+                    },
                     // --------------------------------------------------------
                     {
                         label: 'Set tool change location',

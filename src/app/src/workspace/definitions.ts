@@ -63,6 +63,7 @@ export interface Workspace {
         pauseMode: string;
         holdStopsSpindle: boolean;
         resumeSpinupSeconds: number;
+        toolChangeEnter: boolean;
         toolDrawing: boolean;
         settingsVersion: number;
     };

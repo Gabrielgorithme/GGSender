@@ -83,6 +83,7 @@ const defaultState: State = {
             pauseMode: 'Immediate feed hold',
             holdStopsSpindle: false,
             resumeSpinupSeconds: 5,
+            toolChangeEnter: true,
             toolDrawing: true,
             settingsVersion: 0,
             // Tool gSender believes is in the spindle; null = unknown

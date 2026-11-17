@@ -36,17 +36,22 @@ export const ToolChangeCard = ({ info, spec, m6Seq }: CardProps) => {
             className="flex items-center gap-3 rounded-[8px] border border-gray-200 bg-gray-50 px-3 py-2 dark:border-white/10 dark:bg-black/20"
             data-testid="gg-toolchange-card"
         >
-            <ToolDrawing spec={spec} height={150} className="flex-shrink-0 text-gray-700 dark:text-gray-200" />
-            <div className="flex min-w-0 flex-col gap-1 text-xs text-gray-600 dark:text-gray-300 max-w-[11rem]">
+            <ToolDrawing spec={spec} height={124} className="flex-shrink-0 text-gray-700 dark:text-gray-200" />
+            <div className="flex min-w-0 flex-col gap-0.5 text-xs text-gray-600 dark:text-gray-300 max-w-[12rem]">
                 <div className="text-sm font-semibold text-gray-900 dark:text-white">{spec.type || 'tool'}</div>
-                {spec.diameter !== null && (
-                    <div>
-                        Diameter <b className="font-mono">{fmt(spec.diameter)} {unit}</b>
-                    </div>
-                )}
-                {showR && (
-                    <div>
-                        Corner radius <b className="font-mono">{fmt(spec.cornerRadius as number)} {unit}</b>
+                {(spec.diameter !== null || showR) && (
+                    <div data-testid="gg-toolchange-size">
+                        {spec.diameter !== null && (
+                            <>
+                                ⌀ <b className="font-mono">{fmt(spec.diameter)} {unit}</b>
+                            </>
+                        )}
+                        {spec.diameter !== null && showR && ' · '}
+                        {showR && (
+                            <>
+                                R <b className="font-mono">{fmt(spec.cornerRadius as number)} {unit}</b>
+                            </>
+                        )}
                     </div>
                 )}
                 {spec.taperDeg !== null && (
@@ -60,21 +65,16 @@ export const ToolChangeCard = ({ info, spec, m6Seq }: CardProps) => {
                         Cuts down to <b className="font-mono">Z{fmt(spec.zMin)}</b>
                     </div>
                 )}
-                {spec.description && <div className="italic">{spec.description}</div>}
-                {group?.comment && <div className="italic">{group.comment}</div>}
+                {spec.description && <div className="italic line-clamp-1" title={spec.description}>{spec.description}</div>}
+                {group?.comment && <div className="italic line-clamp-1" title={group.comment}>{group.comment}</div>}
                 {ops.length > 0 && (
-                    <div className="mt-1" data-testid="gg-toolchange-ops">
-                        <div className="font-semibold text-gray-700 dark:text-gray-200">
+                    // two lines at most, so the window's Run button stays in view
+                    <div className="mt-1 line-clamp-2" title={ops.join('\n')} data-testid="gg-toolchange-ops">
+                        <b className="text-gray-700 dark:text-gray-200">
                             For {ops.length === 1 ? 'operation' : `${ops.length} operations`}
                             {group?.seconds ? ` (~${formatDuration(group.seconds)})` : ''}:
-                        </div>
-                        <ul className="pl-2">
-                            {ops.map((name, i) => (
-                                <li key={i} className="truncate" title={name}>
-                                    {name}
-                                </li>
-                            ))}
-                        </ul>
+                        </b>{' '}
+                        {ops.join(', ')}
                     </div>
                 )}
             </div>
