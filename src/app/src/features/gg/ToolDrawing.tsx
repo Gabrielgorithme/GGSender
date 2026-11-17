@@ -30,19 +30,29 @@ export const ToolDrawing = ({ spec, height = 150, compact = false, className = '
     const profile = toolProfile(spec);
     const R = R_DRAW;
 
+    // Text, arrows and lines keep the same size on screen whatever height the
+    // drawing is shown at (text about 12 px): one k unit is the same number
+    // of pixels at any height. The margins hold the labels, so they grow with
+    // k; the bottom one is solved for, since k depends on the total height.
+    const c = 150 / 230 / height; // k per drawing unit of total height
+    const top = compact ? 2 : 8;
+    const labelDepth = 46; // diameter label below the tool, in k units
+    const bottom = compact
+        ? 2
+        : labelDepth * c < 0.9
+          ? Math.max(40, (labelDepth * c * (top + profile.height)) / (1 - labelDepth * c))
+          : 50;
+    const vbH = top + profile.height + bottom;
+    const k = vbH * c;
     // room on the right only for the radius and angle labels
     const sideLabels = profile.dims.some((d) => d.kind !== 'diameter');
     const m = compact
-        ? { left: 4, right: 4, top: 2, bottom: 2 }
-        : { left: 16, right: sideLabels ? 86 : 16, top: 8, bottom: 50 };
+        ? { left: 4, right: 4, top, bottom }
+        : { left: 16, right: sideLabels ? Math.max(60, 74 * k) : 16, top, bottom };
     const half = Math.max(profile.halfWidth, R);
     const vbW = m.left + 2 * half + m.right;
-    const vbH = m.top + profile.height + m.bottom;
     const ox = m.left + half; // svg x of the axis
     const oy = m.top + profile.height; // svg y of the tool's lowest point
-    // text and arrows keep about the same size on screen whatever the drawing's
-    // height: about 12 px at a height of 150 px
-    const k = vbH / 230;
     const font = 18 * k;
     const sx = (x: number) => ox + x;
     const sy = (y: number) => oy - y;

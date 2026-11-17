@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.6.0**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.6.1**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -147,6 +147,37 @@ a simulated board that answers like Grbl: `ok` per line, a status report per `?`
 that no T word reaches the board. Extend it when changing anything in the stream path.
 
 ## Change log
+
+### 0.6.1 (on gSender 1.6.4)
+
+**Tool change window: large Run button, Enter runs it.** Upstream's Run button is small and sits
+under the step's text, so it moves from step to step. Setting *Large Run button, Enter runs it*
+(`workspace.gg.toolChangeEnter`, Tool Changing section, default on):
+- The step's Run button is large (48 px high), shows `⏎ Enter`, and sits at the bottom of the
+  window just above Back/Next, in the same place on every step. The small *RUN G-CODE* heading is
+  left out.
+- Enter presses it: one step per press. Enter does nothing while a step runs, during the first
+  0.7 s after a step's button appears (a second press meant for the step that just finished does not
+  start the next one), once the step's action has run, while the machine is not Idle (the button's
+  own condition), when a step offers several actions, on key repeat, or with Ctrl/Alt/Shift/Meta.
+- While the window is open Enter does nothing else: the jog, jog-stop and rapid-position buttons
+  react to Enter when they have focus, and one of them may still have it from before the tool
+  change (a rapid-position button would move the machine). Typing in a text field and a dialog
+  opened on top of the window are left alone.
+- The tool card beside *Install New Tool* is more compact (drawing 124 px, size on one line,
+  operations on at most two lines, full list on hover), so the Run button stays in view; the
+  drawing's labels now keep the same size whatever height it is drawn at.
+- Off: upstream's small button and heading, no Enter.
+Files: `features/gg/enterToRun.ts`; hooks in `Helper/components/Actions.tsx` (button class, ref,
+hint, heading) and `Substep.tsx` (fills the window so the button can sit at the bottom).
+
+Tests added: the Enter decision (repeat, modifiers, arming delay, text fields, open dialogs), and
+the real wizard Actions component: Enter runs the step once, not too early, not while the machine
+moves or a step runs or after it is done, not with several actions, not from a text field, does not
+reach a focused button outside the window, and does nothing with the setting off.
+
+Not checked: nothing run on Windows or on the machine; the window was checked in rendered previews
+of the real components at the wizard's size, not opened by a real M6.
 
 ### 0.6.0 (on gSender 1.6.4)
 
@@ -458,6 +489,18 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
+
+## To check on the machine after installing 0.6.1
+
+1. Title bar shows `GGSender 0.6.1 (gSender 1.6.4)`.
+2. At a tool change: each step's Run button is large, at the bottom of the window, labelled
+   `⏎ Enter`, in the same place on every step, and visible without scrolling.
+3. Without touching the mouse: Enter probes the initial tool (first change of a job), Enter probes
+   the new tool, Enter resumes. Each press runs one step.
+4. Press Enter twice quickly right after a probe finishes: the next step does not start by itself.
+5. Click a jog button before the job, then at the tool change press Enter: the machine does not jog;
+   the step runs.
+6. Settings, *Large Run button, Enter runs it* off: upstream's small Run button, Enter does nothing.
 
 ## To check on the machine after installing 0.6.0
 
