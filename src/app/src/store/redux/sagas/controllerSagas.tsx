@@ -38,6 +38,7 @@ import {
     trackerOnRequest,
     trackerOnStart,
 } from 'app/lib/gg/loadedTool'; // GGSender
+import { pushHoldSettings } from 'app/lib/gg/holdSettings'; // GGSender
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
 import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
@@ -628,6 +629,8 @@ export function* initialize(): Generator<any, void, any> {
             if (delay !== undefined) {
                 controller.command('settings:updated', { spindleDelay: delay });
             }
+
+            pushHoldSettings(); // GGSender: what pause does
 
             controller.command('settings:updated', { useAaxisForGrbl });
 

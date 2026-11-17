@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.5.1**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.6.0**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -97,6 +97,13 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
 - **Wizard objects built once.** `manualToolchange.tsx` exports an object created at load. Anything
   in it that depends on a setting must be a getter, or it is frozen at start-up.
 - **An official update replaces `app.asar`.** The update check is switched off in this build.
+- **Realtime bytes from 0x80 up go out as UTF-8.** The serial port encodes strings as UTF-8, so
+  `String.fromCharCode(0x9E)` leaves as C2 9E. FluidNC decodes realtime input as UTF-8 and needs
+  exactly that; a single raw 0x9E byte is a decoding error there and is ignored. Send these
+  commands as one-character strings (as the override code does), never as a raw byte buffer.
+- **No G-code during a feed hold.** Lines sent while the controller is held queue behind the held
+  moves; an M3 or M5 waits for them. Anything that must happen during a hold (spindle stop) has to
+  be a realtime command, and anything that waits for G-code to finish before sending `~` deadlocks.
 
 ## Traffic log
 
@@ -122,6 +129,7 @@ Events worth searching for:
 | `accounting` | Sender bookkeeping every 5 s during a job: lines sent and acknowledged, buffer use |
 | `STALL` | Job running, sender not holding, machine idle, no reply for 3 s. Followed by a state dump |
 | `workflow:` | start, pause, resume, stop, with what caused a pause or stop |
+| `hold` | The pause-as-feed-hold state after each change: held, spindle stopped, spin-up wait (0.6.0) |
 
 Code: `src/server/lib/gg/trafficLog.js` (the file), `src/server/lib/gg/streamDiagnostics.js` (the
 events), hooks in `lib/Connection.js`, `GrblController.js`, `CNCEngine.js`, and
@@ -139,6 +147,52 @@ a simulated board that answers like Grbl: `ok` per line, a status report per `?`
 that no T word reaches the board. Extend it when changing anything in the stream path.
 
 ## Change log
+
+### 0.6.0 (on gSender 1.6.4)
+
+**Pause is an immediate feed hold, with the spindle stoppable during the hold.**
+Upstream's pause, with a *Program Pause* event set up (the owner's stops the spindle), only stops
+sending the program and sends the event's G-code behind it, so the machine first runs everything
+already in FluidNC's buffer: it stops "a little later". The FluidDial hold button stops at once.
+Now, with the setting *Pause button* (`workspace.gg.pauseMode`) at *Immediate feed hold* (default):
+- Pause sends `!` at once; the job stops being fed. Applies to the Pause button, the keyboard
+  shortcut and the gamepad (all send `gcode:pause`).
+- While held, above the Start/Pause/Stop buttons (where *Outline* and *Start from line* are when
+  idle): *Stop spindle* / *Start spindle*, with the state below it. It sends 0x9E, the Grbl/FluidNC
+  spindle-stop override, which the controller accepts only in Hold. The button follows the
+  controller's reports (`A:S` while the spindle turns), so a stop made from the pendant shows too.
+- Resume (Start button): waits until the hold is complete (FluidNC ignores `~` while still slowing
+  down, `Hold:1`); if the spindle is stopped, starts it while still held, waits *Spin-up wait when
+  resuming* (`workspace.gg.resumeSpinupSeconds`, default 5 s) with a countdown, then `~`.
+- *Stop the spindle when pausing* (`workspace.gg.holdStopsSpindle`, default off): sends the spindle
+  stop as soon as the hold is reported.
+- The Program Pause and Resume events are not run in this mode: G-code cannot run during a hold, and
+  upstream's resume waits for the Resume event's G-code before sending `~`, which would never come.
+  For the same reason a resume while the controller reports Hold (a hold made from the pendant) also
+  skips them and only sends `~`.
+- A cycle start from the pendant during a gSender hold: when the controller reports Run again the
+  job goes on being fed (otherwise gSender would stay paused while the machine ran out of buffer).
+  FluidNC restarts a stopped spindle itself in that case, waiting only its `spinup_ms`.
+- *Upstream: run the Program Pause event* gives the upstream pause back.
+Checked against FluidNC's source (main branch, Nov 2026): 0x9E in Hold stops or restores the
+spindle; `~` with it stopped restores it then resumes, waiting only the spindle's `spinup_ms`
+(default 0); `A:` reports the real spindle state; realtime bytes are decoded as UTF-8.
+Files: `server/lib/gg/holdPause.js` (the logic), hooks in `GrblController.js` (pause, resume, status,
+stop, two commands `gg:hold:spindle` and `gg:hold:query`, event `gg:hold:state`);
+`features/gg/HoldSpindleControl.tsx`, `lib/gg/holdSettings.ts` (settings pushed to the server's
+preferences on connection and on change). Grbl controller only, as the rest of the fork.
+
+Tests added: the hold logic with a fake clock (immediate hold, resume ordering and waits, a resume
+during deceleration, a toggle not yet confirmed, a stale report, the pendant, auto stop, spindle
+already off, stop during the spin-up wait, the C2 9E encoding); four simulated-board runs of the
+real controller against a board that holds like FluidNC (pause holds with no line in between and
+nothing moves while held, events not run, spindle stopped and restarted before `~` after the wait,
+job completes; auto stop; pendant resume; upstream mode still runs the event); the settings mapping
+read back by the server; the button states and countdown.
+
+Not checked: nothing run on Windows or on the machine; the button was not seen in the running app
+(no machine to hold); FluidNC's behaviour comes from its current source, not the owner's firmware
+version.
 
 ### 0.5.1 (on gSender 1.6.4)
 
@@ -404,6 +458,29 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
+
+## To check on the machine after installing 0.6.0
+
+Air cut first (spindle on, Z well above the work), hand near the e-stop.
+
+1. Title bar shows `GGSender 0.6.0 (gSender 1.6.4)`.
+2. Settings: *Pause button* = Immediate feed hold; *Spin-up wait when resuming* at least the time
+   your spindle takes to reach speed (time it from M3).
+3. During a job, Pause: the machine stops at once, like the FluidDial hold. The console shows no
+   pause-event G-code.
+4. *Stop spindle*: the spindle stops; the button turns into *Start spindle*. *Start spindle*: it
+   starts. Stop it again.
+5. Resume: the spindle starts, the caption counts down, the machine moves only after the wait.
+6. Pause and resume within half a second: the job resumes (it must not stay held).
+7. Pause from gSender, resume from the FluidDial: the job carries on and the progress keeps going.
+   Do this with the spindle running: with it stopped, FluidNC restarts it and waits only its own
+   `spinup_ms`.
+8. Pause, then Stop: the job stops, spindle off.
+9. *Stop the spindle when pausing* on: Pause stops the spindle by itself.
+10. *Pause button* = Upstream: the old pause, with the Program Pause event.
+
+Suggestion: set `spinup_ms` on the spindle in the FluidNC config as well, so a resume from the
+pendant also waits.
 
 ## To check on the machine after installing 0.5.1
 

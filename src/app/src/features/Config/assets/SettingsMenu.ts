@@ -75,6 +75,7 @@ import posthog from 'posthog-js';
 import {updateToolchangeContext} from "app/features/Helper/Wizard.tsx";
 // GGSender: the rule parser is shared with the server
 import { parseFeedRules } from '../../../../../server/lib/gg/feedRules.js';
+import { pushHoldSettings } from 'app/lib/gg/holdSettings'; // GGSender
 import { toast } from 'app/lib/toaster';
 
 export interface SettingsMenuSection {
@@ -242,6 +243,38 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         defaultValue: '1',
                         description:
                             'GGSender: size of one step of the feed override slider and its +/- buttons, in percent.',
+                    },
+                    {
+                        label: 'Pause button',
+                        key: 'workspace.gg.pauseMode',
+                        type: 'select',
+                        options: [
+                            'Immediate feed hold',
+                            'Upstream: run the Program Pause event',
+                        ],
+                        defaultValue: 'Immediate feed hold',
+                        description:
+                            'GGSender: "Immediate feed hold" stops the machine at once, like a pendant\'s hold button, and keeps everything where it is. While held, a Stop spindle / Start spindle button shows above the job controls. The Program Pause and Resume events are not run in this mode (G-code cannot run during a hold). "Upstream" is gSender\'s pause: it stops sending the program and runs the Program Pause event after the moves already sent to the controller, so the machine stops a little later.',
+                        onUpdate: () => pushHoldSettings(),
+                    },
+                    {
+                        label: 'Stop the spindle when pausing',
+                        key: 'workspace.gg.holdStopsSpindle',
+                        type: 'boolean',
+                        defaultValue: false,
+                        description:
+                            'GGSender, with "Immediate feed hold": stop the spindle as soon as the machine is held. Resume starts it again and waits the spin-up time before moving.',
+                        onUpdate: () => pushHoldSettings(),
+                    },
+                    {
+                        label: 'Spin-up wait when resuming',
+                        key: 'workspace.gg.resumeSpinupSeconds',
+                        type: 'number',
+                        unit: 's',
+                        defaultValue: 5,
+                        description:
+                            'GGSender, with "Immediate feed hold": when the spindle was stopped during the hold, Resume starts it, waits this long with the machine still held, then continues the job. Set it to at least the time your spindle takes to reach speed. A cycle start from a pendant does not use it; FluidNC then waits only its own spinup_ms.',
+                        onUpdate: () => pushHoldSettings(),
                     },
                     {
                         label: 'Pre-flight check on file load',
