@@ -99,6 +99,98 @@ class FakeBoard extends events.EventEmitter {
     }
 }
 
+/*
+ * A board that holds like FluidNC: "!" stops it at once (Hold:1, then Hold:0
+ * once "stopped"), "~" is ignored until the hold is complete, 0x9E stops or
+ * starts the spindle only while held, and a "~" with the spindle stopped
+ * starts it itself (FluidNC's restore, without any spin-up wait unless its
+ * config sets one). Status reports carry Ov: and A:S while the spindle turns.
+ */
+class HoldBoard extends FakeBoard {
+    held = false;
+    holdSub = 0;
+    spindle = false;
+    ovrStopped = false;
+    restoredByCycleStart = false;
+    log = []; // lines and realtime bytes in the order the board handled them
+
+    status() {
+        let state = this.queue.length > 0 || this.busy ? 'Run' : 'Idle';
+        if (this.held) {
+            state = `Hold:${this.holdSub}`;
+        }
+        return `<${state}|MPos:1.000,2.000,-3.000|FS:1000,12000|Ov:100,100,100${this.spindle ? '|A:S' : ''}>`;
+    }
+
+    write(data) {
+        const text = String(data);
+        if (text === '!') {
+            this.log.push('RT:!');
+            if (!this.held) {
+                this.held = true;
+                this.holdSub = 1;
+                setTimeout(() => {
+                    this.holdSub = 0;
+                }, 80);
+            }
+            return;
+        }
+        if (text === '~') {
+            this.log.push(this.held && this.holdSub === 1 ? 'RT:~ignored' : 'RT:~');
+            if (this.held && this.holdSub === 0) {
+                if (this.ovrStopped) {
+                    this.ovrStopped = false;
+                    this.spindle = true;
+                    this.restoredByCycleStart = true;
+                }
+                this.held = false;
+                this.pump();
+            }
+            return;
+        }
+        if (text === '\u009e') {
+            this.log.push('RT:9E');
+            if (this.held) {
+                if (this.ovrStopped) {
+                    this.ovrStopped = false;
+                    this.spindle = true;
+                } else if (this.spindle) {
+                    this.ovrStopped = true;
+                    this.spindle = false;
+                }
+            }
+            return;
+        }
+        super.write(data);
+    }
+
+    pump() {
+        if (this.busy || this.held) return;
+        const step = () => {
+            if (this.held || !this.isOpen) {
+                this.busy = false;
+                return;
+            }
+            const line = this.queue.shift();
+            if (line === undefined) {
+                this.busy = false;
+                return;
+            }
+            this.received.push(line);
+            this.log.push(`L:${line}`);
+            if (/M3/.test(line)) this.spindle = true;
+            if (/M5/.test(line)) this.spindle = false;
+            if (line === '$G') {
+                this.reply('[GC:G1 G54 G17 G21 G90 G94 M3 M9 T0 F1000 S12000]');
+            }
+            this.reply('ok');
+            setTimeout(step, 1); // about a line per millisecond: a job takes a few seconds
+        };
+        this.busy = true;
+        setImmediate(step);
+    }
+}
+
 const makeJob = (lines) => {
     const out = ['G21', 'G90', 'T405 M6', 'M3 S12000', 'G0 Z5'];
     for (let i = 0; i < lines; i++) {
@@ -130,8 +222,8 @@ describe('GGSender: job streaming against a simulated board', () => {
         delete process.env.GG_TRAFFIC_LOG_DIR;
     });
 
-    const start = async (toolChangeContext) => {
-        const board = new FakeBoard();
+    const start = async (toolChangeContext, Board = FakeBoard) => {
+        const board = new Board();
         const engine = { unload() {} };
         const controller = new GrblController(engine, board, { port: 'SIM', baudrate: 115200 });
         controller.toolChangeContext = toolChangeContext;
@@ -302,5 +394,125 @@ describe('GGSender: job streaming against a simulated board', () => {
         await sleep(300);
         expect(bytes.slice(2)).toEqual([0x9d, 0x9d, 0x9d]);
         await stop(controller, board);
+    });
+
+    // ---- GGSender 0.6.0: pause as a feed hold -----------------------------
+
+    const waitFor = async (cond, ms = 10000) => {
+        const deadline = Date.now() + ms;
+        while (Date.now() < deadline) {
+            if (cond()) return true;
+            await sleep(20);
+        }
+        return false;
+    };
+
+    // pretend the owner has Program Pause / Resume events set up, and record them
+    const fakeEvents = (controller) => {
+        const triggered = [];
+        controller.event.hasEnabledEvent = (type) => type === 'gcode:pause' || type === 'gcode:resume';
+        const original = controller.event.trigger.bind(controller.event);
+        controller.event.trigger = (key, ...rest) => {
+            if (key === 'gcode:pause' || key === 'gcode:resume') {
+                triggered.push(key);
+                return undefined;
+            }
+            return original(key, ...rest);
+        };
+        return triggered;
+    };
+
+    const startJob = async (controller, lines = 3000) => {
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'sim.nc' }, makeJob(lines), {}, (err) => (err ? reject(err) : resolve()));
+        });
+        const total = controller.sender.state.total;
+        controller.command('gcode:start');
+        await waitFor(() => controller.sender.state.received > total / 3);
+        return total;
+    };
+
+    const realtime = (board) => board.log.filter((e) => e.startsWith('RT:'));
+
+    // a controller on a holding board, always cleaned up
+    const onHoldBoard = async (settings, body) => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, HoldBoard);
+        try {
+            controller.command('settings:updated', settings);
+            await body(board, controller);
+        } finally {
+            await stop(controller, board);
+        }
+    };
+
+    it('hold mode: pause holds at once, the spindle stops and restarts, resume waits for spin-up', async () => {
+        await onHoldBoard({ ggPauseMode: 'hold', ggHoldStopsSpindle: false, ggResumeSpinupSeconds: 0.5 }, async (board, controller) => {
+            const triggered = fakeEvents(controller);
+            const total = await startJob(controller);
+            expect(board.spindle).toBe(true);
+
+            controller.command('gcode:pause');
+            expect(board.log[board.log.length - 1]).toBe('RT:!'); // nothing in between
+            expect(controller.workflow.state).toBe('paused');
+            await sleep(300);
+            const linesAtHold = board.received.length;
+            await sleep(300);
+            expect(board.received.length).toBe(linesAtHold); // the machine stays put
+            expect(linesAtHold).toBeLessThan(total);
+            expect(triggered).toEqual([]); // the Program Pause event is not run
+
+            controller.command('gg:hold:spindle');
+            expect(await waitFor(() => board.spindle === false, 2000)).toBe(true);
+
+            const t0 = Date.now();
+            controller.command('gcode:resume');
+            expect(await waitFor(() => realtime(board).includes('RT:~'), 5000)).toBe(true);
+            const waited = Date.now() - t0;
+            // spindle started while still held, cycle start only after the wait
+            expect(realtime(board)).toEqual(['RT:!', 'RT:9E', 'RT:9E', 'RT:~']);
+            expect(waited).toBeGreaterThanOrEqual(450);
+            expect(board.restoredByCycleStart).toBe(false);
+            expect(board.spindle).toBe(true);
+
+            expect(await waitFor(() => controller.sender.state.received >= total, 20000)).toBe(true);
+            expect(board.received.filter((l) => /^G[12] /.test(l)).length).toBe(3000);
+            expect(triggered).toEqual([]); // nor the Program Resume event
+        });
+    });
+
+    it('hold mode, "stop the spindle when pausing": stops it once the hold is reported', async () => {
+        await onHoldBoard({ ggPauseMode: 'hold', ggHoldStopsSpindle: true, ggResumeSpinupSeconds: 0.2 }, async (board, controller) => {
+            const total = await startJob(controller);
+            controller.command('gcode:pause');
+            expect(await waitFor(() => board.spindle === false, 2000)).toBe(true);
+            controller.command('gcode:resume');
+            expect(await waitFor(() => controller.sender.state.received >= total, 20000)).toBe(true);
+            expect(realtime(board)).toEqual(['RT:!', 'RT:9E', 'RT:9E', 'RT:~']);
+            expect(board.restoredByCycleStart).toBe(false);
+        });
+    });
+
+    it('hold mode: a cycle start from the pendant resumes the job', async () => {
+        await onHoldBoard({ ggPauseMode: 'hold', ggHoldStopsSpindle: false }, async (board, controller) => {
+            const total = await startJob(controller);
+            controller.command('gcode:pause');
+            await sleep(400);
+            expect(controller.workflow.state).toBe('paused');
+            board.write('~'); // the pendant's button
+            expect(await waitFor(() => controller.workflow.state === 'running', 3000)).toBe(true);
+            expect(await waitFor(() => controller.sender.state.received >= total, 20000)).toBe(true);
+        });
+    });
+
+    it('upstream mode: the Program Pause event runs, no feed hold', async () => {
+        await onHoldBoard({ ggPauseMode: 'upstream' }, async (board, controller) => {
+            const triggered = fakeEvents(controller);
+            await startJob(controller);
+            controller.command('gcode:pause');
+            await sleep(300);
+            expect(triggered).toEqual(['gcode:pause']);
+            expect(realtime(board)).toEqual([]);
+            expect(controller.workflow.state).toBe('paused');
+        });
     });
 });

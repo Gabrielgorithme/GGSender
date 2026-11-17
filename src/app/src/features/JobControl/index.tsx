@@ -21,6 +21,7 @@ import pubsub from 'pubsub-js';
 import { SDCardProgress } from 'app/features/JobControl/SDCardProgress.tsx';
 import { isToolProbed } from 'app/features/ATC/utils/ATCFunctions.ts';
 import cx from 'classnames';
+import HoldSpindleControl from 'app/features/gg/HoldSpindleControl'; // GGSender
 
 interface JobControlProps {
     workflow: { state: WORKFLOW_STATES_T };
@@ -254,6 +255,9 @@ const JobControl: React.FC<JobControlProps> = ({
                         />
                     </div>
                 </div>
+
+                {/* GGSender: stop/start the spindle while the job is held */}
+                <HoldSpindleControl />
 
                 <div className="z-10 absolute top-[-30px] max-xl:top-[-34px] left-1/2 right-1/2 flex flex-row gap-2 justify-center items-center">
                     <ControlButton

@@ -60,6 +60,9 @@ export interface Workspace {
         preflightOnLoad: string;
         preflightHidden: string;
         operationsPanel: boolean;
+        pauseMode: string;
+        holdStopsSpindle: boolean;
+        resumeSpinupSeconds: number;
         toolDrawing: boolean;
         settingsVersion: number;
     };

@@ -80,6 +80,9 @@ const defaultState: State = {
             preflightOnLoad: 'When there are warnings',
             preflightHidden: '',
             operationsPanel: true,
+            pauseMode: 'Immediate feed hold',
+            holdStopsSpindle: false,
+            resumeSpinupSeconds: 5,
             toolDrawing: true,
             settingsVersion: 0,
             // Tool gSender believes is in the spindle; null = unknown

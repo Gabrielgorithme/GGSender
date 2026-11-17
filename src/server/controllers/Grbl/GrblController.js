@@ -103,6 +103,12 @@ import {
 	noteOkElsewhere,
 } from "../../lib/gg/streamDiagnostics";
 import {
+	HoldPause,
+	PAUSE_MODE_HOLD,
+	holdPreferences,
+} from "../../lib/gg/holdPause"; // GGSender
+import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
+import {
 	GCODE_TRANSLATION_TYPE,
 	translateGcode,
 } from "../../lib/gcode-translation";
@@ -745,6 +751,20 @@ class GrblController {
 			this.feeder.reset();
 			this.sender.rewind();
 			this.sender.stopCountdown();
+			this.ggHold.reset(); // GGSender
+		});
+		// GGSender: pause as an immediate feed hold (lib/gg/holdPause.js)
+		this.ggHold = new HoldPause({
+			write: (data) => this.write(data),
+			writeByte: (data) => this.connection.writeImmediate(data),
+			onChange: (state) => {
+				try {
+					logEvent("hold", JSON.stringify(state));
+				} catch (err) {
+					// diagnostics must never disturb the stream
+				}
+				this.emit("gg:hold:state", state);
+			},
 		});
 		this.workflow.on("pause", (...args) => {
 			this.emit("workflow:state", this.workflow.state);
@@ -787,6 +807,13 @@ class GrblController {
 		});
 
 		this.runner.on("status", (res) => {
+			// GGSender: follow the hold; a pendant's cycle start resumes the job
+			if (
+				this.ggHold.onStatus(res) === "resumed-elsewhere" &&
+				this.workflow.state === WORKFLOW_STATE_PAUSED
+			) {
+				this.workflow.resume();
+			}
 			if (
 				!this.runner.hasSettings() &&
 				res.activeState === GRBL_ACTIVE_STATE_IDLE
@@ -1919,6 +1946,17 @@ class GrblController {
 				this.command("gcode:pause");
 			},
 			"gcode:pause": async () => {
+				// GGSender: immediate feed hold, without the Program Pause event
+				// (lib/gg/holdPause.js). Upstream's pause is a setting away.
+				const ggPrefs = holdPreferences(store.get("preferences", {}));
+				if (
+					ggPrefs.mode === PAUSE_MODE_HOLD &&
+					this.workflow.state === WORKFLOW_STATE_RUNNING
+				) {
+					this.ggHold.hold({ stopSpindle: ggPrefs.stopSpindle });
+					this.workflow.pause();
+					return;
+				}
 				if (this.event.hasEnabledEvent(PROGRAM_PAUSE)) {
 					this.workflow.pause();
 					this.event.trigger(PROGRAM_PAUSE);
@@ -1936,6 +1974,21 @@ class GrblController {
 			},
 			"gcode:resume": async () => {
 				const [ignoreEvents = false] = args;
+				// GGSender: leave a feed hold without the Program Resume event, which
+				// cannot run while held (lib/gg/holdPause.js)
+				const ggPrefs = holdPreferences(store.get("preferences", {}));
+				const ggMachineHeld =
+					_.get(this.state, "status.activeState") === GRBL_ACTIVE_STATE_HOLD;
+				if (
+					this.ggHold.active ||
+					(ggPrefs.mode === PAUSE_MODE_HOLD && ggMachineHeld)
+				) {
+					this.ggHold.resume(ggPrefs.spinupMs, async () => {
+						await delay(1000);
+						this.workflow.resume();
+					});
+					return;
+				}
 				if (!ignoreEvents && this.event.hasEnabledEvent(PROGRAM_RESUME)) {
 					this.feederCB = () => {
 						this.write("~");
@@ -1968,6 +2021,13 @@ class GrblController {
 				delay(100).then(() => {
 					this.write("~");
 				});
+			},
+			// GGSender: stop or start the spindle during a gSender hold
+			"gg:hold:spindle": () => {
+				this.ggHold.toggleSpindle();
+			},
+			"gg:hold:query": () => {
+				this.emit("gg:hold:state", this.ggHold.snapshot());
 			},
 			feedhold: () => {
 				this.event.trigger(FEED_HOLD);
