@@ -230,9 +230,9 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         key: 'workspace.gg.spindleOverrideStep',
                         type: 'select',
                         options: ['1', '2', '5', '10'],
-                        defaultValue: '10',
+                        defaultValue: '1',
                         description:
-                            'GGSender: size of one step of the spindle override slider and its +/- buttons, in percent. The firmware accepts 1% steps; upstream gSender only offers 10. Takes effect immediately.',
+                            'GGSender: size of one step of the spindle override slider and its +/- buttons, in percent. The firmware accepts 1% steps; upstream gSender only offers 10 (choose 10 for the upstream behaviour). Takes effect immediately.',
                     },
                     {
                         label: 'Feed override step',
@@ -1996,30 +1996,6 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         },
                     },
                     // GGSender additions ------------------------------------
-                    {
-                        label: 'When the requested tool is already loaded',
-                        type: 'select',
-                        key: 'workspace.gg.sameToolPolicy',
-                        options: [
-                            'Ask',
-                            'Continue without asking',
-                            'Always run tool change',
-                        ],
-                        defaultValue: 'Ask',
-                        description:
-                            'GGSender: what to do when a program asks for the tool shown as loaded in the top bar.\n\n"Ask" offers to continue without a tool change.\n\n"Continue without asking" skips the tool change.\n\n"Always run tool change" is the upstream behaviour.',
-                        hidden: (getPending) => {
-                            const strategy = getPending(
-                                'workspace.toolChangeOption',
-                                '',
-                            );
-                            return (
-                                strategy === 'Ignore' ||
-                                strategy === 'Pause' ||
-                                strategy === 'Code'
-                            );
-                        },
-                    },
                     {
                         label: 'Send tool numbers to controller',
                         type: 'boolean',

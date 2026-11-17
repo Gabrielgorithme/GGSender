@@ -31,18 +31,13 @@ import controller from 'app/lib/controller';
 import manualToolChange from 'app/wizards/manualToolchange';
 import {
     createTracker,
-    decideSameTool,
-    effectiveToolChangeCount,
-    getLoadedTool,
-    getSameToolPolicy,
     normalizeTool,
     setLoadedTool,
     trackerOnAbort,
     trackerOnComplete,
     trackerOnRequest,
     trackerOnStart,
-} from 'app/lib/gg/loadedTool';
-import { askSameTool } from 'app/features/gg/sameToolPrompt';
+} from 'app/lib/gg/loadedTool'; // GGSender
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
 import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
@@ -743,43 +738,9 @@ export function* initialize(): Generator<any, void, any> {
 
             const { option, count } = context;
 
-            // GGSender: is the requested tool the one already in the spindle?
-            trackerOnRequest(ggToolTracker, count);
-            const usesWizard = [
-                'Standard Re-zero',
-                'Flexible Re-zero',
-                'Fixed Tool Sensor',
-            ].includes(option);
-            if (usesWizard) {
-                let decision = decideSameTool({
-                    requested: context.tool,
-                    loaded: getLoadedTool().tool,
-                    policy: getSameToolPolicy(),
-                });
-                if (decision === 'ask') {
-                    const keepTool = await askSameTool({
-                        tool: normalizeTool(context.tool),
-                        since: getLoadedTool().since,
-                        comment,
-                    });
-                    decision = keepTool ? 'skip' : 'run';
-                }
-                if (decision === 'skip') {
-                    toast.info(
-                        `T${normalizeTool(context.tool)} is already loaded - tool change skipped`,
-                        { position: 'bottom-right' },
-                    );
-                    // Same line the wizards end with: resumes the job
-                    controller.command('gcode', ['%toolchange_complete']);
-                    return;
-                }
-            }
-            // If the first M6 of this job was skipped no length reference
-            // was taken, so this change must probe the old tool first.
-            const ggCount = effectiveToolChangeCount(
-                count,
-                ggToolTracker.referenceTaken,
-            );
+            // GGSender: loaded tool bookkeeping (recorded only; every M6
+            // runs its tool change, as upstream)
+            trackerOnRequest(ggToolTracker);
 
             if (option === 'Pause') {
                 // GGSender: a plain pause has no "finished" signal; take the
@@ -800,11 +761,11 @@ export function* initialize(): Generator<any, void, any> {
                     instructions = manualToolChange;
                 } else if (option === 'Flexible Re-zero') {
                     title = 'Flexible Re-zero Tool Change';
-                    instructions = semiautoToolChange(ggCount);
+                    instructions = semiautoToolChange(count);
                 } else if (option === 'Fixed Tool Sensor') {
                     title = 'Fixed Tool Sensor Tool Change';
                     instructions = await determineFixedSensorInstructions(
-                        ggCount,
+                        count,
                         comment,
                     );
                 } else {
@@ -813,11 +774,7 @@ export function* initialize(): Generator<any, void, any> {
                 }
 
                 // GGSender: remember what this change will leave in the spindle
-                trackerOnStart(
-                    ggToolTracker,
-                    context.tool,
-                    option !== 'Standard Re-zero',
-                );
+                trackerOnStart(ggToolTracker, context.tool);
 
                 if (instructions.onStart) {
                     const onStart = instructions.onStart();

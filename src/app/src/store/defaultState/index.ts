@@ -75,7 +75,7 @@ const defaultState: State = {
         jobTimes: [],
         // GGSender additions
         gg: {
-            spindleOverrideStep: '10',
+            spindleOverrideStep: '1',
             feedOverrideStep: '1',
             preflightOnLoad: 'When there are warnings',
             preflightHidden: '',
@@ -87,7 +87,6 @@ const defaultState: State = {
                 tool: null,
                 since: null,
             },
-            sameToolPolicy: 'Ask',
         },
         toolChange: {
             passthrough: false,

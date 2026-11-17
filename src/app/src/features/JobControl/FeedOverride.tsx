@@ -82,7 +82,7 @@ const Overrides: React.FC<OverridesProps> = ({
             : 'Laser',
     );
     const [spindleStep, setSpindleStep] = useState(
-        readOverrideStep('workspace.gg.spindleOverrideStep'),
+        readOverrideStep('workspace.gg.spindleOverrideStep', 1),
     );
     const [feedStep, setFeedStep] = useState(
         readOverrideStep('workspace.gg.feedOverrideStep', 1),
@@ -100,7 +100,7 @@ const Overrides: React.FC<OverridesProps> = ({
     }
 
     const handleStoreChange = () => {
-        setSpindleStep(readOverrideStep('workspace.gg.spindleOverrideStep'));
+        setSpindleStep(readOverrideStep('workspace.gg.spindleOverrideStep', 1));
         setFeedStep(readOverrideStep('workspace.gg.feedOverrideStep', 1));
         setShowSpindleOverride(store.get('workspace.spindleFunctions'));
         setSpindleOverrideLabel(
@@ -191,7 +191,10 @@ const Overrides: React.FC<OverridesProps> = ({
                         globalLocalOvSTimestamp = Date.now();
                         sendSpindle(values[0]);
                     }}
-                    onPointerUp={(_e) => {
+                    // GGSender: as the feed slider. Upstream used onPointerUp,
+                    // which does not fire when the drag ends off the slider, and
+                    // the new value was then shown but never sent.
+                    onLostPointerCapture={(_e) => {
                         sendSpindle(localOvS);
                     }}
                     id="spindle-override"
