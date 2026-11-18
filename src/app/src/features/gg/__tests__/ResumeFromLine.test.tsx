@@ -172,9 +172,24 @@ describe('GGSender: Resume From dialog', () => {
         open();
         expect(screen.getByTestId('gg-resume-query')).toHaveValue('N26');
         expect(screen.getByTestId('gg-resume-stop-note')).toHaveTextContent('from N26');
+        expect(screen.queryByTestId('gg-resume-stop-far')).toBeNull();
         // a later line is flagged
         type('N27');
         expect(within(screen.getByTestId('gg-resume-issues')).getByText(/after where the tool stopped/)).toBeInTheDocument();
+    });
+
+    it('a stop position far from every move is called out', () => {
+        store.set(LAST_STOP_KEY, {
+            fileName: 'job.nc',
+            total: TOTAL + 1,
+            received: 21,
+            wpos: { x: 0, y: 0, z: 15 }, // jogged away, or position lost
+            inches: false,
+            at: 1,
+        });
+        renderButton();
+        open();
+        expect(screen.getByTestId('gg-resume-stop-far')).toHaveTextContent(/may not be where the tool stopped/);
     });
 
     it('a line it cannot resume from: the reason, and no Resume', () => {

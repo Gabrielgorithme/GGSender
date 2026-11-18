@@ -46,6 +46,9 @@ interface Props {
     atcValidator?: AtcValidator;
 }
 
+// a stop position further than this from the matched move is suspect
+const FAR_FROM_PATH = { mm: 0.5, in: 0.02 };
+
 const num = (s: string): number | null => {
     if (s.trim() === '') return null;
     const n = Number(s);
@@ -211,6 +214,12 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                         The last run stopped with the tool {fmt(suggestion.distance)} {unit} from{' '}
                         {nWordOf(idx.lines[suggestion.line]) ?? `line ${suggestion.line + 1}`}: resuming there redoes that move.
                         gSender had counted {suggestion.record.received} lines; the machine runs behind that count.
+                        {suggestion.distance > FAR_FROM_PATH[unit] && (
+                            <span className="block font-semibold text-amber-600 dark:text-amber-400" data-testid="gg-resume-stop-far">
+                                That is far from every move near where the job had got to: the recorded position may not be
+                                where the tool stopped (moved after the stop, or position lost). Check the line before resuming.
+                            </span>
+                        )}
                     </div>
                 )}
                 {resolved?.error && <div className="text-sm text-red-600">{resolved.error}</div>}
