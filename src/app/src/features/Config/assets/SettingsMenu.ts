@@ -245,6 +245,15 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             'GGSender: size of one step of the feed override slider and its +/- buttons, in percent.',
                     },
                     {
+                        label: 'Feed override minimum',
+                        key: 'workspace.gg.feedOverrideMin',
+                        type: 'select',
+                        options: ['10', '20'],
+                        defaultValue: '10',
+                        description:
+                            'GGSender: the lowest value of the feed override slider, in percent. FluidNC does not accept a value below 10%. To stop the feed, use Pause. Upstream gSender uses 20.',
+                    },
+                    {
                         label: 'Pause button',
                         key: 'workspace.gg.pauseMode',
                         type: 'select',

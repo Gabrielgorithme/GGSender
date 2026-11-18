@@ -11,6 +11,8 @@ import store from 'app/store';
 import { mapPositionToUnits } from 'app/lib/units';
 import { useWorkspaceState } from 'app/hooks/useWorkspaceState.ts';
 import posthog from 'posthog-js';
+import { FEED_OVERRIDE_MIN_KEY, feedOverrideMin } from 'app/lib/gg/overrideLimits'; // GGSender
+import { useStoreSetting } from 'app/features/gg/useStoreSetting'; // GGSender
 
 interface OverridesProps {
     ovF: number;
@@ -84,6 +86,7 @@ const Overrides: React.FC<OverridesProps> = ({
     const [spindleStep, setSpindleStep] = useState(
         readOverrideStep('workspace.gg.spindleOverrideStep', 1),
     );
+    const ggFeedMin = feedOverrideMin(useStoreSetting(FEED_OVERRIDE_MIN_KEY, '10')); // GGSender
     const [feedStep, setFeedStep] = useState(
         readOverrideStep('workspace.gg.feedOverrideStep', 1),
     );
@@ -136,7 +139,7 @@ const Overrides: React.FC<OverridesProps> = ({
         >
             <RangeSlider
                 step={feedStep}
-                min={OVERRIDE_VALUE_RANGES.MIN}
+                min={ggFeedMin} // GGSender: 10% (FluidNC's minimum) by default; upstream 20%
                 max={OVERRIDE_VALUE_RANGES.MAX}
                 value={feedrate}
                 percentage={[localOvF]}

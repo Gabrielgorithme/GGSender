@@ -70,6 +70,7 @@ export interface Workspace {
         resumeFromLine: boolean;
         lastStop: unknown;
         holdOnError: boolean;
+        feedOverrideMin: string;
         settingsVersion: number;
     };
     toolChange: {
