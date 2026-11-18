@@ -286,6 +286,14 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
+                        label: 'Resume from a line',
+                        key: 'workspace.gg.resumeFromLine',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: the Resume From button replaces Start From. Choose an N number (or the line where the last job stopped, or the start of an operation); the dialog shows the line, its operation and tool, and every line it will send first: up to the tool change safe height, the program\'s modes at that line, an optional tool change, spindle and spin-up wait, coolant, over the start point, rapid down to the operation\'s highest rapid height, then fed down at its plunge feed. Off: upstream Start From.',
+                    },
+                    {
                         label: 'Homed state from the controller',
                         key: 'workspace.gg.homedFromController',
                         type: 'boolean',

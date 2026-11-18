@@ -22,6 +22,8 @@ import { SDCardProgress } from 'app/features/JobControl/SDCardProgress.tsx';
 import { isToolProbed } from 'app/features/ATC/utils/ATCFunctions.ts';
 import cx from 'classnames';
 import HoldSpindleControl from 'app/features/gg/HoldSpindleControl'; // GGSender
+import { RESUME_SETTING_KEY, ResumeFromLine } from 'app/features/gg/ResumeFromLine'; // GGSender
+import { useStoreSetting } from 'app/features/gg/useStoreSetting'; // GGSender
 
 interface JobControlProps {
     workflow: { state: WORKFLOW_STATES_T };
@@ -66,6 +68,7 @@ const JobControl: React.FC<JobControlProps> = ({
 }) => {
     const [lastLine, setLastLine] = useState(1);
     const [pubsubTokens, setPubsubTokens] = useState([]);
+    const ggResume = useStoreSetting<boolean>(RESUME_SETTING_KEY, true); // GGSender
     //const disabled = !isConnected || !fileLoaded;
     const { state: workflowState } = workflow;
     const disabled =
@@ -248,11 +251,19 @@ const JobControl: React.FC<JobControlProps> = ({
                 >
                     <div className="flex flex-row gap-2 justify-center mb-3 w-full">
                         <OutlineButton disabled={disabled} />
-                        <StartFromLine
-                            disabled={disabled}
-                            lastLine={lastLine}
-                            atcValidator={validateFileForATC}
-                        />
+                        {/* GGSender: resume from a line replaces Start From (setting) */}
+                        {ggResume ? (
+                            <ResumeFromLine
+                                disabled={disabled}
+                                atcValidator={validateFileForATC}
+                            />
+                        ) : (
+                            <StartFromLine
+                                disabled={disabled}
+                                lastLine={lastLine}
+                                atcValidator={validateFileForATC}
+                            />
+                        )}
                     </div>
                 </div>
 

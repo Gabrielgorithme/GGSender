@@ -88,6 +88,8 @@ const defaultState: State = {
             resetOverridesPerOp: true,
             homedFromController: true,
             resumeFromLine: true,
+            // where the last job stopped early (lib/gg/stopPoint); null = none
+            lastStop: null,
             settingsVersion: 0,
             // Tool gSender believes is in the spindle; null = unknown
             loadedTool: {

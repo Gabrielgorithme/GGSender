@@ -113,6 +113,7 @@ import {
 	resetPreference,
 } from "../../lib/gg/opResets"; // GGSender
 import { HomedState } from "../../lib/gg/homedState"; // GGSender
+import { ResumeSession, hasToolReference } from "../../lib/gg/resumeSplice"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
 	GCODE_TRANSLATION_TYPE,
@@ -768,6 +769,7 @@ class GrblController {
 			this.sender.stopCountdown();
 			this.ggHold.reset(); // GGSender
 			this.ggOpResets.reset(); // GGSender
+			this.ggResume.restore(this.sender); // GGSender: program back as loaded
 		});
 		// GGSender: feed and spindle overrides back to 100% when the job
 		// reaches the next operation (lib/gg/opResets.js)
@@ -794,6 +796,8 @@ class GrblController {
 			},
 			log: (msg) => logEvent("ops", msg),
 		});
+		// GGSender: resume from a line (lib/gg/resumeSplice.js)
+		this.ggResume = new ResumeSession({ log: (msg) => logEvent("resume", msg) });
 		// GGSender: homed or not, from what the controller reports (lib/gg/homedState.js)
 		this.ggHomed = new HomedState({
 			onChange: (state) => {
@@ -1828,6 +1832,11 @@ class GrblController {
 				] = args;
 				const totalLines = this.sender.state.total;
 				const startEventEnabled = this.event.hasEnabledEvent(PROGRAM_START);
+				// GGSender: a resume prepared by gg:resume:start, or the program as loaded
+				const ggResume = this.ggResume.take();
+				if (!ggResume) {
+					this.ggResume.restore(this.sender);
+				}
 				log.info(startEventEnabled);
 				this.emit(
 					"job:start",
@@ -1836,7 +1845,7 @@ class GrblController {
 
 				this.command("gcode", "%global.state.workspace=modal.wcs");
 
-				if (lineToStartFrom && lineToStartFrom <= totalLines) {
+				if (!ggResume && lineToStartFrom && lineToStartFrom <= totalLines) {
 					const { lines = [] } = this.sender.state;
 					const firstHalf = lines.slice(0, lineToStartFrom);
 					let feedFound = false;
@@ -1942,7 +1951,11 @@ class GrblController {
 						this.feeder.reset();
 						this.workflow.start();
 						// Sender
-						this.sender.next();
+						if (ggResume) {
+							this.ggResume.begin(this.sender, ggResume); // GGSender
+						} else {
+							this.sender.next();
+						}
 						this.feederCB = null;
 					};
 					this.event.trigger(PROGRAM_START);
@@ -1953,8 +1966,12 @@ class GrblController {
 					this.feeder.reset();
 
 					// Sender
-					this.sender.setStartLine(0);
-					this.sender.next({ startFromLine: true });
+					if (ggResume) {
+						this.ggResume.begin(this.sender, ggResume); // GGSender
+					} else {
+						this.sender.setStartLine(0);
+						this.sender.next({ startFromLine: true });
+					}
 				}
 			},
 			stop: () => {
@@ -2478,6 +2495,29 @@ class GrblController {
 				};
 
 				store.set("preferences", updated);
+			},
+			// GGSender: resume from a line, planned by the interface
+			// (lib/gg/resumeSplice.js, app lib/gg/resumePlan.ts)
+			"gg:resume:start": () => {
+				const [plan] = args;
+				const activeState = _.get(this.state, "status.activeState", "");
+				if (this.workflow.state !== WORKFLOW_STATE_IDLE || activeState !== GRBL_ACTIVE_STATE_IDLE) {
+					const why = `The machine must be idle with no job running (machine ${activeState}, job ${this.workflow.state}).`;
+					logEvent("resume", `refused: ${why}`);
+					this.emit("gg:resume:error", why);
+					return;
+				}
+				const result = this.ggResume.prepare(this.sender, plan || {}, {
+					toolReference: hasToolReference(this.sharedContext),
+				});
+				if (result.error) {
+					this.emit("gg:resume:error", result.error);
+					return;
+				}
+				this.command("gcode:start");
+			},
+			"gg:resume:query": () => {
+				this.emit("gg:resume:info", { toolReference: hasToolReference(this.sharedContext) });
 			},
 			// GGSender: the operations' first moves, from the interface's analysis
 			"gg:job:operations": () => {

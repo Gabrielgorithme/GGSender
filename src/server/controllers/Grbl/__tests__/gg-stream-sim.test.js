@@ -307,6 +307,15 @@ class HomingBoard extends FakeBoard {
     }
 }
 
+/* A board that also records what the controller sends to the interface. */
+class RecordingBoard extends FakeBoard {
+    events = [];
+
+    emitToSockets(eventName, ...args) {
+        this.events.push([eventName, ...args]);
+    }
+}
+
 const makeJob = (lines) => {
     const out = ['G21', 'G90', 'T405 M6', 'M3 S12000', 'G0 Z5'];
     for (let i = 0; i < lines; i++) {
@@ -737,5 +746,157 @@ describe('GGSender: job streaming against a simulated board', () => {
         } finally {
             await stop(controller, board);
         }
+    });
+
+    // ---- GGSender 0.7.0: resume from a line ---------------------------------
+
+    // eslint-disable-next-line global-require
+    const { planResume, resumePayload } = require('../../../../app/src/lib/gg/resumePlan');
+    // eslint-disable-next-line global-require
+    const { analyzeJob } = require('../../../../app/src/lib/gg/jobOperations');
+
+    const fusionLike = () => {
+        const out = [
+            '(prog)',
+            '(T5 D=6 CR=0 - ZMIN=-1 - flat end mill)',
+            'N10 G90 G94',
+            'N11 G17',
+            'N12 G21',
+            'N13 G28 G91 Z0',
+            'N14 G90',
+            '',
+            '(Op A)',
+            'N15 T5 M6',
+            'N16 S12000 M3',
+            'N17 G17 G90 G94',
+            'N18 G54',
+            'N19 M8',
+            'N20 G0 X0 Y0',
+            'N21 Z5',
+            'N22 G0 Z3',
+            'N23 G1 Z-1 F200',
+            'N24 G1 X10 Y0 F800',
+        ];
+        let n = 25;
+        for (let i = 0; i < 400; i++) out.push(`N${n++} X${(i % 40) * 0.25} Y${Math.floor(i / 40) * 0.5}`);
+        out.push(`N${n++} G0 Z5`, '', '(Op B)', `N${n++} G0 X20 Y0`, `N${n++} Z3`, `N${n++} G1 Z-1 F200`);
+        for (let i = 0; i < 100; i++) out.push(`N${n++} G1 X${20 + (i % 10)} Y${Math.floor(i / 10)} F800`);
+        out.push(`N${n++} G0 Z5`, `N${n++} M9`, `N${n++} M5`, `N${n++} G28 G91 Z0`, `N${n++} M30`);
+        return out.join('\n');
+    };
+
+    const loadProgram = async (controller, gcode) => {
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'resume.nc' }, gcode, {}, (err) => (err ? reject(err) : resolve()));
+        });
+        // the resume needs the machine reported Idle
+        expect(await waitFor(() => controller.state.status.activeState === 'Idle', 5000)).toBe(true);
+    };
+
+    const planFor = (gcode, n, measureTool = false) => {
+        const lines = gcode.split('\n');
+        const line = lines.findIndex((l) => l.startsWith(`${n} `));
+        const plan = planResume(gcode, analyzeJob(gcode), line, { safeZ: -0.1, measureTool, spinupSeconds: 0.2 });
+        expect(plan.ok).toBe(true);
+        const total = lines.filter((l) => l.trim().length > 0).length;
+        return { plan, payload: resumePayload(plan, total, measureTool) };
+    };
+
+    it('resume from a line: entry moves first, then the program from that line to its end', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, RecordingBoard);
+        try {
+            const gcode = fusionLike();
+            await loadProgram(controller, gcode);
+            const original = controller.sender.state.lines;
+            const { plan, payload } = planFor(gcode, 'N300');
+            const before = board.received.length;
+            controller.command('gg:resume:start', payload);
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+            const sent = board.received.slice(before).filter((l) => l !== '$G' && l !== '$$');
+            // the entry lines (the comment is not sent), then N300 onwards
+            const entry = plan.preamble.filter((l) => !l.startsWith('('));
+            expect(sent.slice(0, entry.length)).toEqual(entry);
+            expect(entry[0]).toBe('G21 G53 G0 Z-0.1');
+            expect(entry).toContain('S12000 M3');
+            expect(entry).toContain('M8');
+            expect(sent[entry.length]).toBe(plan.text);
+            expect(sent[entry.length].startsWith('N300 ')).toBe(true);
+            // nothing before N300 was sent, everything after it was
+            const nums = sent.map((l) => /^N(\d+)/.exec(l)?.[1]).filter(Boolean).map(Number);
+            expect(Math.min(...nums)).toBe(300);
+            const lastLine = gcode.split('\n').pop();
+            expect(lastLine).toMatch(/^N\d+ M30$/);
+            expect(sent[sent.length - 1]).toBe(lastLine);
+            expect(sent.some((l) => /^N(1\d\d|2\d\d) /.test(l))).toBe(false);
+            // the come-down: rapid to the operation's highest rapid height, then fed
+            const at = plan.start;
+            expect(entry).toContain(`G0 X${at.x} Y${at.y}`);
+            expect(entry).toContain('G0 Z5');
+            expect(entry).toContain(`G1 Z${at.z} F200`);
+            // stopped: the program is back as loaded
+            controller.command('gcode:stop', { force: true });
+            await sleep(200);
+            expect(controller.sender.state.lines).toBe(original);
+            const log = fs.readFileSync(trafficLog.getTrafficLogFile(), 'utf8');
+            expect(log).toMatch(/# resume: line \d+ "N300 /);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('resume refused when the loaded program is not the one planned: nothing sent, nothing changed', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, RecordingBoard);
+        try {
+            const gcode = fusionLike();
+            await loadProgram(controller, gcode);
+            const original = controller.sender.state.lines;
+            const { payload } = planFor(gcode, 'N300');
+            const before = board.received.length;
+            controller.command('gg:resume:start', { ...payload, text: 'N300 X0 Y0' });
+            controller.command('gg:resume:start', { ...payload, total: payload.total + 1 });
+            controller.command('gg:resume:start', { ...payload, preamble: ['$H'] });
+            await sleep(300);
+            expect(board.events.filter(([e]) => e === 'gg:resume:error')).toHaveLength(3);
+            expect(controller.workflow.state).toBe('idle');
+            expect(controller.sender.state.lines).toBe(original);
+            expect(board.received.slice(before).filter((l) => l !== '$G' && l !== '$$')).toEqual([]);
+            // a normal start afterwards runs the program from its first line
+            controller.command('gcode:start');
+            expect(await waitFor(() => board.received.includes('N10 G90 G94'), 5000)).toBe(true);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    const toolChangeCount = async (withReference) => {
+        const { board, controller } = await start({ toolChangeOption: 'Fixed Tool Sensor' }, RecordingBoard);
+        try {
+            const gcode = fusionLike();
+            await loadProgram(controller, gcode);
+            if (withReference) {
+                // what an earlier tool change of this connection leaves
+                controller.sharedContext.toolchange = { TOOL_OFFSET: -42.125 };
+            }
+            const { payload } = planFor(gcode, 'N300', true);
+            expect(payload.preamble).toContain('T5 M6');
+            controller.command('gg:resume:start', payload);
+            expect(await waitFor(() => board.events.some(([e]) => e === 'gcode:toolChange'), 10000)).toBe(true);
+            const [, ctx] = board.events.find(([e]) => e === 'gcode:toolChange');
+            expect(controller.workflow.state).toBe('paused'); // waiting for the wizard
+            return ctx;
+        } finally {
+            await stop(controller, board);
+        }
+    };
+
+    it('resume measuring the tool, with a reference from this connection: the wizard skips the initial probe', async () => {
+        const ctx = await toolChangeCount(true);
+        expect(ctx.count).toBe(2);
+        expect(ctx.tool).toBe('T5');
+    });
+
+    it('resume measuring the tool, without a reference: the wizard measures the tool in the spindle first', async () => {
+        const ctx = await toolChangeCount(false);
+        expect(ctx.count).toBe(1);
     });
 });

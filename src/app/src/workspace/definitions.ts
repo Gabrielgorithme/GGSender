@@ -68,6 +68,7 @@ export interface Workspace {
         resetOverridesPerOp: boolean;
         homedFromController: boolean;
         resumeFromLine: boolean;
+        lastStop: unknown;
         settingsVersion: number;
     };
     toolChange: {
