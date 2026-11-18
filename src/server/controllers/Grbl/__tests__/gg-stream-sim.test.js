@@ -191,6 +191,96 @@ class HoldBoard extends FakeBoard {
     }
 }
 
+/*
+ * A board with a planner, like Grbl/FluidNC: a line is answered "ok" as soon
+ * as its move is queued (up to PLANNER moves), and the moves execute later,
+ * one after the other (rapids slower than the short cuts). A line with G4
+ * (dwell) is answered only once every earlier move has executed, and its own
+ * move is queued after that, as the firmware does. Overrides follow the
+ * realtime bytes. The log shows, in order, what was executed (EXEC:) and when
+ * each realtime byte arrived (RT:).
+ */
+class PlannerBoard extends FakeBoard {
+    static PLANNER = 8;
+    rx = [];
+    planner = [];
+    executing = null;
+    feedOv = 100;
+    spindleOv = 100;
+    log = [];
+    waiting = false;
+
+    status() {
+        const state = this.rx.length > 0 || this.planner.length > 0 || this.executing ? 'Run' : 'Idle';
+        return `<${state}|MPos:0.000,0.000,0.000|FS:1000,12000|Ov:${this.feedOv},100,${this.spindleOv}>`;
+    }
+
+    write(data) {
+        const text = String(data);
+        if (text === '?') {
+            this.reply(this.status());
+            return;
+        }
+        if (text === '\x18') {
+            this.rx = [];
+            this.planner = [];
+            setTimeout(() => this.reply("Grbl 1.1f ['$' for help]"), 5);
+            return;
+        }
+        if (text.length === 1 && text !== '\n') {
+            const c = text.charCodeAt(0);
+            const steps = { 0x91: 10, 0x92: -10, 0x93: 1, 0x94: -1 };
+            const sSteps = { 0x9a: 10, 0x9b: -10, 0x9c: 1, 0x9d: -1 };
+            if (c === 0x90) this.feedOv = 100;
+            if (steps[c]) this.feedOv += steps[c];
+            if (c === 0x99) this.spindleOv = 100;
+            if (sSteps[c]) this.spindleOv += sSteps[c];
+            this.log.push(`RT:${c.toString(16)}`);
+            return;
+        }
+        text.split('\n').filter((l) => l.length > 0).forEach((l) => this.rx.push(l));
+        this.parse();
+    }
+
+    parse() {
+        while (this.isOpen && this.rx.length > 0) {
+            const line = this.rx[0];
+            const isDwell = /G0*4(?![0-9])/.test(line);
+            if (isDwell && (this.planner.length > 0 || this.executing)) {
+                return; // synchronise: wait for the moves to run out
+            }
+            const isMove = /[XYZ]-?[\d.]/.test(line) && !line.startsWith('$');
+            if (isMove && this.planner.length >= PlannerBoard.PLANNER) {
+                return; // planner full
+            }
+            this.rx.shift();
+            this.received.push(line);
+            if (line === '$G') {
+                this.reply('[GC:G1 G54 G17 G21 G90 G94 M3 M9 T0 F1000 S12000]');
+            }
+            if (isMove) {
+                this.planner.push(line);
+                this.execute();
+            }
+            this.reply('ok');
+        }
+    }
+
+    execute() {
+        if (this.executing || this.planner.length === 0 || !this.isOpen) {
+            return;
+        }
+        this.executing = this.planner.shift();
+        this.log.push(`EXEC:${this.executing}`);
+        const ms = /^G0 /.test(this.executing) || /G0 X/.test(this.executing) ? 12 : 2;
+        setTimeout(() => {
+            this.executing = null;
+            this.parse();
+            this.execute();
+        }, ms);
+    }
+}
+
 const makeJob = (lines) => {
     const out = ['G21', 'G90', 'T405 M6', 'M3 S12000', 'G0 Z5'];
     for (let i = 0; i < lines; i++) {
@@ -514,5 +604,81 @@ describe('GGSender: job streaming against a simulated board', () => {
             expect(realtime(board)).toEqual([]);
             expect(controller.workflow.state).toBe('paused');
         });
+    });
+
+    // ---- GGSender 0.7.0: overrides back to 100% at each operation ---------
+
+    const twoOperations = () => {
+        const out = ['(program)', 'G21 G90', 'M3 S12000', '', '(First op)', 'G0 X0 Y0', 'G0 Z3', 'G1 Z-1 F300'];
+        for (let i = 0; i < 300; i++) out.push(`G1 X${(i % 50) * 0.2} Y${(i % 7) * 0.3} F1000`);
+        out.push('G0 Z5.5', '', '(Second op)', 'G0 X20 Y0', 'G0 Z4', 'G1 Z-1.5 F300');
+        for (let i = 0; i < 300; i++) out.push(`G1 X${20 + (i % 50) * 0.2} Y${(i % 7) * 0.3} F1000`);
+        out.push('G0 Z15', 'M5');
+        return out.join('\n');
+    };
+
+    const runTwoOperations = async (board, controller) => {
+        const gcode = twoOperations();
+        const lines = gcode.split('\n').filter((l) => l.trim().length > 0);
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'ops.nc' }, gcode, {}, (err) => (err ? reject(err) : resolve()));
+        });
+        controller.command('gg:job:operations', {
+            name: 'ops.nc',
+            total: lines.length,
+            boundaries: [{ seq: lines.indexOf('G0 X20 Y0'), text: 'G0 X20 Y0', name: 'Second op' }],
+        });
+        controller.command('gcode:start');
+        // the owner slows the first operation down
+        await waitFor(() => controller.sender.state.received > 20);
+        controller.command('feedOverride', 80);
+        controller.command('spindleOverride', 90);
+        expect(await waitFor(() => controller.sender.state.received >= lines.length, 30000)).toBe(true);
+        await waitFor(() => board.planner.length === 0 && !board.executing, 3000);
+    };
+
+    it('resets feed and spindle overrides between the operations, after the first one has run out', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            await runTwoOperations(board, controller);
+            // the dwell went on the second operation's first move only
+            expect(board.received).toContain('G0 X20 Y0 G4 P0');
+            expect(board.received.filter((l) => /G4 P0$/.test(l))).toHaveLength(1);
+            // overrides were 80% and 90% during the first operation...
+            const firstOpEnd = board.log.indexOf('EXEC:G0 Z5.5');
+            const secondOpCut = board.log.indexOf('EXEC:G1 Z-1.5 F300');
+            expect(firstOpEnd).toBeGreaterThan(0);
+            const feedReset = board.log.indexOf('RT:90');
+            const spindleReset = board.log.indexOf('RT:99');
+            // ...and went back to 100 after the last move of the first one ran,
+            // before the first cut of the second one
+            expect(feedReset).toBeGreaterThan(firstOpEnd);
+            expect(feedReset).toBeLessThan(secondOpCut);
+            expect(spindleReset).toBeGreaterThan(firstOpEnd);
+            expect(spindleReset).toBeLessThan(secondOpCut);
+            expect(board.log.slice(0, firstOpEnd).filter((e) => e === 'RT:92')).toHaveLength(2); // the owner's -20%
+            expect(board.feedOv).toBe(100);
+            expect(board.spindleOv).toBe(100);
+            const log = fs.readFileSync(trafficLog.getTrafficLogFile(), 'utf8');
+            expect(log).toMatch(/"Second op" begins, reset: feed spindle/);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('setting off: no dwell added, overrides stay', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            controller.command('settings:updated', { ggResetOverridesPerOp: false });
+            await runTwoOperations(board, controller);
+            expect(board.received).toContain('G0 X20 Y0');
+            expect(board.received.some((l) => /G4/.test(l))).toBe(false);
+            expect(board.log).not.toContain('RT:90');
+            expect(board.feedOv).toBe(80);
+            expect(board.spindleOv).toBe(90);
+        } finally {
+            controller.command('settings:updated', { ggResetOverridesPerOp: true });
+            await stop(controller, board);
+        }
     });
 });

@@ -39,6 +39,7 @@ import {
     trackerOnStart,
 } from 'app/lib/gg/loadedTool'; // GGSender
 import { pushHoldSettings } from 'app/lib/gg/holdSettings'; // GGSender
+import { pushOperationBoundaries, watchOperationBoundaries } from 'app/lib/gg/opBoundaries'; // GGSender
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
 import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
@@ -136,6 +137,7 @@ import get from 'lodash/get';
 import posthog from 'posthog-js';
 
 export function* initialize(): Generator<any, void, any> {
+    watchOperationBoundaries(); // GGSender: where the overrides are reset
     let visualizeWorker: typeof VisualizeWorker | null = null;
     let visualizeJobId = 0;
     // let estimateWorker: EstimateWorker | null = null;
@@ -631,6 +633,7 @@ export function* initialize(): Generator<any, void, any> {
             }
 
             pushHoldSettings(); // GGSender: what pause does
+            pushOperationBoundaries(); // GGSender: where the overrides are reset
 
             controller.command('settings:updated', { useAaxisForGrbl });
 

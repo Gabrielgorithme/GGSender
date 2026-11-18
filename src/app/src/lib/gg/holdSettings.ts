@@ -1,12 +1,14 @@
 /*
  * GGSender addition (not part of upstream gSender).
  *
- * Settings of the pause-as-feed-hold (server: src/server/lib/gg/holdPause.js).
- * The server decides what a pause does, so the settings are sent to it, in
- * its stored preferences: on connection and whenever one changes.
+ * Settings the server acts on, sent to it in its stored preferences: on
+ * connection and whenever one changes.
+ * - the pause-as-feed-hold (server: src/server/lib/gg/holdPause.js)
+ * - overrides back to 100% at each operation (server: src/server/lib/gg/opResets.js)
  */
 import store from 'app/store';
 import controller from 'app/lib/controller';
+import { RESET_OVERRIDES_KEY } from './opBoundaries';
 
 export const PAUSE_MODE_KEY = 'workspace.gg.pauseMode';
 export const HOLD_STOPS_SPINDLE_KEY = 'workspace.gg.holdStopsSpindle';
@@ -31,6 +33,7 @@ export const holdSettingsPayload = (get: Get) => ({
     ggPauseMode: get(PAUSE_MODE_KEY, PAUSE_HOLD) === PAUSE_UPSTREAM ? 'upstream' : 'hold',
     ggHoldStopsSpindle: get(HOLD_STOPS_SPINDLE_KEY, false) === true,
     ggResumeSpinupSeconds: spinupSeconds(get),
+    ggResetOverridesPerOp: get(RESET_OVERRIDES_KEY, true) !== false,
 });
 
 export const pushHoldSettings = () => {

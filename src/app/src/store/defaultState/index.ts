@@ -85,6 +85,9 @@ const defaultState: State = {
             resumeSpinupSeconds: 5,
             toolChangeEnter: true,
             toolDrawing: true,
+            resetOverridesPerOp: true,
+            homedFromController: true,
+            resumeFromLine: true,
             settingsVersion: 0,
             // Tool gSender believes is in the spindle; null = unknown
             loadedTool: {

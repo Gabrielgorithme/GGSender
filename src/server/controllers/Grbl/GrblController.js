@@ -107,6 +107,11 @@ import {
 	PAUSE_MODE_HOLD,
 	holdPreferences,
 } from "../../lib/gg/holdPause"; // GGSender
+import {
+	OperationResets,
+	overridesToReset,
+	resetPreference,
+} from "../../lib/gg/opResets"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
 	GCODE_TRANSLATION_TYPE,
@@ -675,6 +680,13 @@ class GrblController {
 					line = applyFeedRules(line, ggTool, ggRules);
 				}
 
+				// GGSender: overrides back to 100% at each operation (lib/gg/opResets)
+				line = this.ggOpResets.filter(line, {
+					seq: sent,
+					lines: this.sender.state.lines,
+					enabled: resetPreference(store.get("preferences", {})),
+				});
+
 				const useAaxisForGrbl = store.get("preferences.useAaxisForGrbl", false);
 
 				// If we don't need to convert A-axis to Y-axis, return the line as is since A-axis commands are given by default
@@ -723,6 +735,7 @@ class GrblController {
 
 			this.emit("serialport:read", line);
 
+			this.ggOpResets.onWritten(); // GGSender: one entry per line written
 			this.write(line + "\n");
 			log.silly(`> ${line}`);
 		});
@@ -743,6 +756,7 @@ class GrblController {
 		this.workflow = new Workflow();
 		this.workflow.on("start", (...args) => {
 			this.emit("workflow:state", this.workflow.state);
+			this.ggOpResets.reset(); // GGSender
 			this.sender.rewind();
 			this.sender.resumeCountdown();
 		});
@@ -752,6 +766,32 @@ class GrblController {
 			this.sender.rewind();
 			this.sender.stopCountdown();
 			this.ggHold.reset(); // GGSender
+			this.ggOpResets.reset(); // GGSender
+		});
+		// GGSender: feed and spindle overrides back to 100% when the job
+		// reaches the next operation (lib/gg/opResets.js)
+		this.ggOpResets = new OperationResets({
+			onReset: (op) => {
+				const [feedOV, , spindleOV] = this.state.status.ov || [];
+				const want = overridesToReset(
+					overrideBase(feedOV, this.ggLastFeedOverride),
+					overrideBase(spindleOV, this.ggLastSpindleOverride),
+				);
+				logEvent("ops", `"${op.name}" begins, reset: ${want.feed ? "feed " : ""}${want.spindle ? "spindle" : ""}${want.feed || want.spindle ? "" : "none needed"}`);
+				// at once, not through the 25 ms override queues: the
+				// operation's first cut follows its rapids closely
+				const now = Date.now();
+				if (want.feed) {
+					this.ggLastFeedOverride = { value: 100, at: now };
+					this.connection.writeImmediate(String.fromCharCode(0x90));
+					this.sender.setOvF(100);
+				}
+				if (want.spindle) {
+					this.ggLastSpindleOverride = { value: 100, at: now };
+					this.connection.writeImmediate(String.fromCharCode(0x99));
+				}
+			},
+			log: (msg) => logEvent("ops", msg),
 		});
 		// GGSender: pause as an immediate feed hold (lib/gg/holdPause.js)
 		this.ggHold = new HoldPause({
@@ -902,6 +942,7 @@ class GrblController {
 					);
 					this.sender.unhold();
 				}
+				this.ggOpResets.onReply(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -918,6 +959,7 @@ class GrblController {
 						`Stop sending G-code: hold=${hold}, sent=${sent}, received=${received + 1}`,
 					);
 				}
+				this.ggOpResets.onReply(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -999,6 +1041,7 @@ class GrblController {
 				} else {
 					this.emit("serialport:read", res.raw);
 				}
+				this.ggOpResets.onReply(); // GGSender: an error answers the line too
 				this.sender.ack();
 				this.sender.next();
 
@@ -2423,6 +2466,12 @@ class GrblController {
 				};
 
 				store.set("preferences", updated);
+			},
+			// GGSender: the operations' first moves, from the interface's analysis
+			"gg:job:operations": () => {
+				const [payload] = args;
+				this.ggOpResets.setProgram(payload);
+				logEvent("ops", `${this.ggOpResets.boundaries.size} operation starts for "${this.ggOpResets.program.name}" (${this.ggOpResets.program.total} lines)`);
 			},
 			"toolchange:context": () => {
 				const [context] = args;

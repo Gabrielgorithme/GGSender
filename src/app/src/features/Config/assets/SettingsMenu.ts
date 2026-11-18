@@ -277,6 +277,15 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
+                        label: 'Reset overrides at each operation',
+                        key: 'workspace.gg.resetOverridesPerOp',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: when the job reaches the next operation of the file (the operations listed in the 3D view), the feed and spindle overrides go back to 100%. The rapid override is left as it is. Not at the first operation: overrides set before starting stay for it. The machine comes to a stop at the end of the previous operation (where it almost stops anyway, at the top of its retract) so the reset lands between the two operations. Off: overrides stay until changed, as in upstream gSender.',
+                        onUpdate: () => pushHoldSettings(),
+                    },
+                    {
                         label: 'Pre-flight check on file load',
                         key: 'workspace.gg.preflightOnLoad',
                         type: 'select',

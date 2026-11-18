@@ -65,6 +65,9 @@ export interface Workspace {
         resumeSpinupSeconds: number;
         toolChangeEnter: boolean;
         toolDrawing: boolean;
+        resetOverridesPerOp: boolean;
+        homedFromController: boolean;
+        resumeFromLine: boolean;
         settingsVersion: number;
     };
     toolChange: {
