@@ -97,7 +97,7 @@ describe('GGSender: pre-flight panel', () => {
         renderControl({ hasHomed: false });
         await load(PROGRAM);
         fireEvent.click(screen.getByTestId('gg-preflight-button'));
-        expect(screen.getByTestId('gg-preflight-travel-unchecked')).toHaveTextContent(/not been homed/);
+        expect(screen.getByTestId('gg-preflight-travel-unchecked')).toHaveTextContent(/not homed/);
     });
 
     // ---- GGSender 0.7.0: homed state from the controller ------------------
@@ -109,7 +109,7 @@ describe('GGSender: pre-flight panel', () => {
         fireEvent.click(screen.getByTestId('gg-preflight-button'));
         expect(screen.queryByTestId('gg-preflight-travel-unchecked')).toBeNull();
         expect(within(screen.getByTestId('gg-preflight-travel')).getAllByText('fits')).toHaveLength(3);
-        expect(screen.getByTestId('gg-preflight-issue-HOMED_BEFORE_CONNECT')).toHaveTextContent(/unlocked with \$X/);
+        expect(screen.getByTestId('gg-preflight-issue-HOMED_BEFORE_CONNECT')).toHaveTextContent(/A homing cycle or \$X removed the alarm/);
     });
 
     it('a homing reported while connected: travel checked, no note', async () => {
@@ -127,7 +127,7 @@ describe('GGSender: pre-flight panel', () => {
         act(() => setHomed({ homed: true, how: 'seen', axes: 'XYZ' }));
         await load(PROGRAM);
         fireEvent.click(screen.getByTestId('gg-preflight-button'));
-        expect(screen.getByTestId('gg-preflight-travel-unchecked')).toHaveTextContent(/not been homed/);
+        expect(screen.getByTestId('gg-preflight-travel-unchecked')).toHaveTextContent(/not homed/);
     });
 
     it('line numbers show the line in the 3D view', async () => {

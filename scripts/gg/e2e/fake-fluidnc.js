@@ -7,6 +7,18 @@
 // stream (UTF-8); "!" holds, "~" resumes, 0x18 resets; an arc with I/K and no
 // J in the G17 plane gets error:33; status reports carry Ov: and A:S.
 // Everything is logged to the log file as JSON lines.
+//
+// Work offset and tool sensor (0.7.1): positions are machine coordinates;
+// status reports carry WCO after each change of it and every 10th report, as
+// FluidNC does. G10 L20 P0 Z<v> writes the Z offset (from any source). G38.2
+// ends with the tool tip on the sensor: machine Z = SENSOR + tool length.
+// G4 P<s> dwells for real, after the planner has emptied.
+// A second port (port + 1) plays the pendant and the owner's hands, one
+// command per line, answered with the state as JSON:
+//   zero [offset]   Z zero by hand: tool tip on the part's surface (+ offset mm)
+//   tool <length>   another tool is in the spindle
+//   wco <z>         write the Z offset directly
+//   state           only report
 const net = require('net');
 const fs = require('fs');
 const PORT = Number(process.argv[2] || 2323);
@@ -14,6 +26,25 @@ const LOG = process.argv[3] || '/tmp/fake-fluidnc.log';
 const MS = Number(process.argv[4] || 25);
 fs.writeFileSync(LOG, '');
 const log = (o) => fs.appendFileSync(LOG, JSON.stringify({ t: Date.now(), ...o }) + '\n');
+
+// the machine, shared by the connections: machine Z of the sensor trigger and
+// of the part's surface for a tool of length 0, the tool in the spindle
+const SENSOR = -70;
+const SURFACE = -55;
+const machine = { toolLength: 30, wcoZ: 0, wcoCounter: 0, pos: { x: 0, y: 0, z: 0 }, planned: { x: 0, y: 0, z: 0 } };
+const setWco = (z, why) => {
+    machine.wcoZ = z;
+    machine.wcoCounter = 0; // reported in the next status report
+    log({ ev: 'wco', z, why });
+};
+const machineState = () => ({
+    toolLength: machine.toolLength,
+    wcoZ: machine.wcoZ,
+    mposZ: machine.pos.z,
+    // machine height of the Z zero of the part, tool length taken out
+    zeroPlane: Number((machine.wcoZ - machine.toolLength).toFixed(3)),
+    sensorReads: Number((SENSOR + machine.toolLength - machine.wcoZ).toFixed(3)),
+});
 
 net.createServer((sock) => {
     log({ ev: 'connect' });
@@ -23,27 +54,43 @@ net.createServer((sock) => {
     let executing = null;
     let held = false;
     const ov = { feed: 100, spindle: 100 };
-    const pos = { x: 0, y: 0, z: 0 };
-    const planned = { x: 0, y: 0, z: 0 }; // end of the last move queued
+    const { pos, planned } = machine; // machine coordinates; planned: end of the last move queued
     let state = 'Idle';
     let plane = 'G17';
     let spindle = false;
+    let incremental = false; // G91
+    let syncing = false; // a probe or dwell is under way
     const send = (s) => { if (!sock.destroyed) sock.write(s + '\r\n'); };
     const status = () => {
-        const busy = rx.length || planner.length || executing;
+        const busy = rx.some((l) => l && !l.startsWith('$')) || planner.length || executing || syncing;
         const st = held ? 'Hold:0' : busy ? 'Run' : state;
-        return `<${st}|MPos:${pos.x.toFixed(3)},${pos.y.toFixed(3)},${pos.z.toFixed(3)}|FS:1000,24000|Ov:${ov.feed},100,${ov.spindle}${spindle ? '|A:S' : ''}>`;
+        let wco = '';
+        if (machine.wcoCounter <= 0) {
+            wco = `|WCO:0.000,0.000,${machine.wcoZ.toFixed(3)}`;
+            machine.wcoCounter = 10;
+        } else {
+            machine.wcoCounter--;
+        }
+        return `<${st}|MPos:${pos.x.toFixed(3)},${pos.y.toFixed(3)},${pos.z.toFixed(3)}|FS:1000,24000|Ov:${ov.feed},100,${ov.spindle}${spindle ? '|A:S' : ''}${wco}>`;
     };
+    const codeOf = (line) => line.replace(/\([^)]*\)/g, ' ');
     const target = (line) => {
         const t = { ...planned };
-        if (/G53|G28|G30/.test(line)) return t;
+        const code = codeOf(line);
+        if (/G28|G30/.test(code)) return t;
+        const inMachine = /G53/.test(code);
         for (const a of ['X', 'Y', 'Z']) {
-            const m = new RegExp(a + '(-?[\\d.]+)').exec(line);
-            if (m) t[a.toLowerCase()] = Number(m[1]);
+            const m = new RegExp(a + '(-?[\\d.]+)').exec(code);
+            if (!m) continue;
+            const k = a.toLowerCase();
+            const v = Number(m[1]);
+            if (inMachine) t[k] = v;
+            else if (incremental) t[k] += v;
+            else t[k] = v + (k === 'z' ? machine.wcoZ : 0);
         }
         return t;
     };
-    const isMove = (l) => /[XYZ]-?[\d.]/.test(l) && !l.startsWith('$');
+    const isMove = (l) => /[XYZ]-?[\d.]/.test(codeOf(l)) && !l.startsWith('$') && !/G10|G38|G92|G43/.test(codeOf(l));
     const execute = () => {
         if (executing || held || planner.length === 0) return;
         executing = planner.shift();
@@ -67,11 +114,44 @@ net.createServer((sock) => {
     };
     const parse = () => {
         while (rx.length) {
+            if (syncing) return;
             const line = rx[0];
-            if (/G0*4(?![0-9])/.test(line) && (planner.length || executing)) return;
+            if (line === '') {
+                rx.shift();
+                send('ok');
+                continue;
+            }
+            const code = codeOf(line);
+            const dwell = /G0*4(?![0-9])\s*P([\d.]+)/.exec(code);
+            const probe = /G38\.2/.test(code);
+            const g10 = /G10\s*L20\s*P0/.test(code);
+            // these wait for every earlier move to have run
+            if ((/G0*4(?![0-9])/.test(code) || probe || g10) && (planner.length || executing)) return;
             if (isMove(line) && planner.length >= 16) return;
             rx.shift();
             log({ ev: 'line', line });
+            if (/G91(?![0-9.])/.test(code)) incremental = true;
+            if (/G90(?![0-9.])/.test(code)) incremental = false;
+            if (probe || (dwell && Number(dwell[1]) > 0)) {
+                // a probe ends on the sensor; a dwell lasts its time
+                syncing = true;
+                setTimeout(() => {
+                    syncing = false;
+                    if (probe) {
+                        pos.z = SENSOR + machine.toolLength;
+                        planned.z = pos.z;
+                        log({ ev: 'probe', mposZ: pos.z });
+                        send(`[PRB:${pos.x.toFixed(3)},${pos.y.toFixed(3)},${pos.z.toFixed(3)}:1]`);
+                    }
+                    send('ok');
+                    parse();
+                }, probe ? MS * 4 : Number(dwell[1]) * 1000);
+                return;
+            }
+            if (g10) {
+                const z = /Z(-?[\d.]+)/.exec(code);
+                if (z) setWco(pos.z - Number(z[1]), line);
+            }
             if (/M0*3(?![0-9])/.test(line)) spindle = true;
             if (/M0*5(?![0-9])/.test(line)) spindle = false;
             if (/G1[789](?![0-9])/.test(line)) plane = /G1[789]/.exec(line)[0];
@@ -96,7 +176,7 @@ net.createServer((sock) => {
         if (c === '!') held = true;
         if (c === '~') { held = false; execute(); }
         if (c === '\x18') {
-            rx.length = 0; planner.length = 0; executing = null; held = false;
+            rx.length = 0; planner.length = 0; executing = null; held = false; incremental = false;
             Object.assign(planned, pos);
             setTimeout(() => send("Grbl 3.9 [FluidNC v3.9.1 (noradio) '$' for help]"), 20);
         }
@@ -115,7 +195,10 @@ net.createServer((sock) => {
             if (c === '\n') {
                 const line = buf.trim();
                 buf = '';
-                if (line) { rx.push(line); parse(); }
+                // an empty line is answered too: gSender takes comments out
+                // before it writes, so a comment line arrives empty
+                rx.push(line);
+                parse();
                 continue;
             }
             if (c !== '\r') buf += c;
@@ -125,3 +208,28 @@ net.createServer((sock) => {
     sock.on('error', () => {});
     setTimeout(() => send("Grbl 3.9 [FluidNC v3.9.1 (noradio) '$' for help]"), 50);
 }).listen(PORT, '127.0.0.1', () => console.log('fake FluidNC on', PORT));
+
+// the pendant and the owner's hands
+net.createServer((sock) => {
+    sock.setEncoding('utf8');
+    let buf = '';
+    sock.on('data', (d) => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+            const [cmd, arg] = buf.slice(0, i).trim().split(/\s+/);
+            buf = buf.slice(i + 1);
+            if (cmd === 'tool') machine.toolLength = Number(arg);
+            if (cmd === 'zero') {
+                // the tool tip on the part's surface, and Z zero set there
+                machine.pos.z = SURFACE + (Number(arg) || 0) + machine.toolLength;
+                machine.planned.z = machine.pos.z;
+                setWco(machine.pos.z, 'pendant zero');
+            }
+            if (cmd === 'wco') setWco(Number(arg), 'pendant');
+            log({ ev: 'pendant', cmd, arg, ...machineState() });
+            sock.write(JSON.stringify(machineState()) + '\n');
+        }
+    });
+    sock.on('error', () => {});
+}).listen(PORT + 1, '127.0.0.1', () => console.log('fake pendant on', PORT + 1));

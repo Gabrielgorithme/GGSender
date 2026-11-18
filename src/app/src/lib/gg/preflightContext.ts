@@ -64,7 +64,7 @@ export const checkTravel = (
     if (!input.hasHomed) {
         return {
             status: 'unchecked',
-            reason: 'The machine has not been homed, so machine coordinates do not tell where the limits are.',
+            reason: 'The machine is not homed. The machine coordinates do not show where the limits are.',
             axes: [],
         };
     }
@@ -149,7 +149,7 @@ export const contextIssues = (
             severity: 'info',
             code: 'HOMED_BEFORE_CONNECT',
             message:
-                'The controller was out of alarm when gSender connected, so it was homed before (or unlocked with $X without homing). The travel check assumes it was homed.',
+                'The controller was not in alarm when gSender connected. A homing cycle or $X removed the alarm before. The travel check is correct only after a homing cycle.',
         });
     }
     ctx.travel.axes
@@ -159,7 +159,7 @@ export const contextIssues = (
             issues.push({
                 severity: 'warning',
                 code: `TRAVEL_${A}_AMBIGUOUS`,
-                message: `The machine is at ${A}0, so it cannot be told which side of 0 its ${A} travel is on. If ${A} homes to the end it is at now and travel runs negative from there, the job would go ${a.over} mm past the limit; if travel runs positive from here, it fits.`,
+                message: `The machine is at ${A}0. The check cannot know the direction of the ${A} travel from this position. If the travel is negative, the job goes ${a.over} mm past the limit. If the travel is positive, the job is in the travel.`,
             });
         });
     if (ctx.travel.status === 'outside') {
@@ -171,7 +171,7 @@ export const contextIssues = (
                 issues.push({
                     severity: 'error',
                     code: `TRAVEL_${a.axis.toUpperCase()}`,
-                    message: `With the current zero, ${a.axis.toUpperCase()} would go ${a.over} mm ${side} the machine's travel (machine ${a.axis.toUpperCase()} ${side === 'above' ? a.jobMax : a.jobMin}, limit ${edge}).`,
+                    message: `With the current zero, ${a.axis.toUpperCase()} goes ${a.over} mm ${side} the travel of the machine (machine ${a.axis.toUpperCase()} ${side === 'above' ? a.jobMax : a.jobMin}, limit ${edge}).`,
                 });
             });
     }
@@ -181,7 +181,7 @@ export const contextIssues = (
         issues.push({
             severity: 'warning',
             code: 'SPINDLE_ABOVE_MAX',
-            message: `The program asks for S${report.maxSpindle}; the controller's maximum ($30) is ${ctx.spindleMax}, so it will run at ${ctx.spindleMax}.`,
+            message: `The program uses S${report.maxSpindle}. The maximum of the controller ($30) is ${ctx.spindleMax}. The spindle turns at ${ctx.spindleMax}.`,
         });
     }
 
@@ -191,7 +191,7 @@ export const contextIssues = (
             issues.push({
                 severity: 'warning',
                 code: 'STRATEGY_IGNORE',
-                message: `The program has ${report.toolChanges} tool change(s), and the tool change strategy is "Ignore": they will be skipped.`,
+                message: `The program has ${report.toolChanges} tool change(s). The tool change strategy is "Ignore". gSender does not do these tool changes.`,
                 line: firstChange?.changeLine ?? undefined,
             });
         }
@@ -201,7 +201,7 @@ export const contextIssues = (
                 issues.push({
                     severity: 'warning',
                     code: 'TOOL_NUMBER_SENT',
-                    message: `T${over.tool} is above 255 and tool numbers are sent to the controller: Grbl-type firmware rejects it (error:38).`,
+                    message: `T${over.tool} is above 255, and gSender sends tool numbers to the controller. Grbl-type firmware does not accept it (error:38).`,
                     line: over.changeLine ?? undefined,
                 });
             }
@@ -216,21 +216,21 @@ export const contextIssues = (
             issues.push({
                 severity: 'info',
                 code: 'LOADED_UNKNOWN',
-                message: `The program starts by changing to T${firstChange.tool}. The loaded tool is not known.`,
+                message: `The program starts with a change to T${firstChange.tool}. The tool in the spindle is not known.`,
                 line: firstChange.changeLine ?? undefined,
             });
         } else if (normalizeTool(firstChange.tool) === loaded) {
             issues.push({
                 severity: 'info',
                 code: 'LOADED_MATCHES',
-                message: `The program starts with T${firstChange.tool}, which is recorded as loaded.`,
+                message: `The program starts with T${firstChange.tool}. The recorded tool in the spindle is also T${firstChange.tool}.`,
                 line: firstChange.changeLine ?? undefined,
             });
         } else {
             issues.push({
                 severity: 'info',
                 code: 'LOADED_DIFFERS',
-                message: `T${loaded} is recorded as loaded; the program changes to T${firstChange.tool} first.`,
+                message: `The recorded tool in the spindle is T${loaded}. The program changes to T${firstChange.tool} first.`,
                 line: firstChange.changeLine ?? undefined,
             });
         }
@@ -240,8 +240,8 @@ export const contextIssues = (
             severity: 'info',
             code: 'CUTS_WITH_LOADED',
             message: loaded === null
-                ? 'The moves before the first tool change are cut with the tool in the spindle (not known).'
-                : `The moves before the first tool change are cut with the tool in the spindle (recorded as T${loaded}).`,
+                ? 'The moves before the first tool change use the tool in the spindle. This tool is not known.'
+                : `The moves before the first tool change use the tool in the spindle. The recorded tool is T${loaded}.`,
             line: cutsBefore.firstLine,
         });
     }
@@ -259,14 +259,14 @@ export const contextIssues = (
             issues.push({
                 severity: 'warning',
                 code: 'FEED_RULES_ACTIVE',
-                message: `${applies.length} feed/speed rule(s) will change this program (${tools.join(', ')}).`,
+                message: `${applies.length} feed/speed rule(s) change this program (${tools.join(', ')}).`,
             });
         }
         if (unused.length > 0) {
             issues.push({
                 severity: 'info',
                 code: 'FEED_RULES_UNUSED',
-                message: `Feed/speed rules for tools not in this program: ${Array.from(new Set(unused.map((r) => `T${r.tool}`))).join(', ')}.`,
+                message: `Feed/speed rules for tools that are not in this program: ${Array.from(new Set(unused.map((r) => `T${r.tool}`))).join(', ')}.`,
             });
         }
     }

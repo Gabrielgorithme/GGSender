@@ -149,7 +149,7 @@ const IssueRow = ({ issue }: { issue: PreflightIssue }) => (
                 type="button"
                 className="flex-shrink-0 self-start text-xs px-1.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
                 onClick={() => hideCode(issue.code)}
-                title="Hide this kind of warning for every file. Bring it back at the bottom of this list or in Settings."
+                title="Hide this kind of warning for all files. To show it again, use the list at the bottom or Settings."
                 data-testid={`gg-preflight-hide-${issue.code}`}
             >
                 Hide this kind
@@ -323,8 +323,9 @@ export const PreflightPanel = ({ entry, onClose }: PanelProps) => {
                                 </tbody>
                             </table>
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                Travel from $130–$132. Z is for the tool now in the spindle: after a
-                                tool change, work Z moves by the difference in tool length.
+                                The travel comes from $130–$132. The Z values are for the tool in the
+                                spindle. After a tool change, the work Z changes by the difference in tool
+                                length.
                             </p>
                         </>
                     )}
