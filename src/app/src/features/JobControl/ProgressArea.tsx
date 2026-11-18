@@ -23,20 +23,12 @@
 import { JSX } from 'react';
 import moment from 'moment';
 
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipProvider,
-    TooltipTrigger,
-} from 'app/components/shadcn/Tooltip';
 import { SenderStatus } from 'app/lib/definitions/sender_feeder';
 import {
     convertMillisecondsToTimeStamp,
     convertSecondsToDHMS,
 } from 'app/lib/datetime';
-import { WORKFLOW_STATE_PAUSED } from '../../constants';
-
-import WoodcuttingProgress from './WoodcuttingProgress';
+import ProgressText from 'app/features/gg/ProgressText'; // GGSender
 
 type Props = {
     senderStatus: SenderStatus;
@@ -48,7 +40,7 @@ type Props = {
  * @prop {Object} state Default state given from parent component
  *
  */
-const ProgressArea = ({ senderStatus, workflowState }: Props) => {
+const ProgressArea = ({ senderStatus }: Props) => {
     const { total, currentLineRunning, elapsedTime, remainingTime, startTime } =
         senderStatus || {};
 
@@ -118,15 +110,8 @@ const ProgressArea = ({ senderStatus, workflowState }: Props) => {
     const timeSplit = convertSecondsToDHMS(Number(remainingTime));
     const timeComponent = getTimesHTML(timeSplit);
 
-    let translationNumber = '55px';
-    if (percentageValue > 35 && percentageValue <= 50) {
-        translationNumber = (percentageValue || 0) + '%';
-    } else if (percentageValue > 50 && percentageValue < 75) {
-        translationNumber = percentageValue - 40 + '%';
-    }
-
-    const isPaused = workflowState === WORKFLOW_STATE_PAUSED;
-
+    // GGSender: the percentage no longer slides along a bar, and the paused
+    // look of the removed animation is gone (workflowState is kept in Props)
     return (
         <div
             className="w-64"
@@ -136,47 +121,13 @@ const ProgressArea = ({ senderStatus, workflowState }: Props) => {
             aria-valuemax={100}
             aria-label="Job Progress"
         >
-            <div className="border-solid border border-gray-500 dark:border-gray-700 rounded-sm bg-gray-100 dark:bg-dark gap-2 flex flex-row justify-between items-center pr-1 pt-1 text-gray-900 dark:text-gray-200">
-                <div className="flex flex-col gap-0 w-full h-full -mt-6">
-                    <div
-                        className="flex flex-row justify-start items-end px-3 -mb-1 whitespace-nowrap transition-transform duration-200"
-                        style={{
-                            transform: `translate(${translationNumber}, 16px)`,
-                        }}
-                    >
-                        <span className="font-bold text-2xl">
-                            {displayedPercentage}
-                        </span>
-                        <span>%</span>
-                    </div>
-
-                    <WoodcuttingProgress
-                        percentage={percentageValue}
-                        isPaused={isPaused}
-                    />
-                </div>
-                <TooltipProvider>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <div className="flex flex-col  justify-center items-center w-32">
-                                {isFinalizing ? (
-                                    <>
-                                        <span className="text-sm">Finalizing</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        {timeComponent}
-                                        <span className="text-sm">remaining</span>
-                                    </>
-                                )}
-                            </div>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-64">
-                            {updateTime()}
-                        </TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
-            </div>
+            {/* GGSender: text over the 3D view, no box (features/gg/ProgressText) */}
+            <ProgressText
+                percentage={displayedPercentage}
+                isFinalizing={isFinalizing}
+                time={timeComponent}
+                finishTime={updateTime()}
+            />
             <div className="w-full flex flex-row justify-between gap-2 text-sm whitespace-nowrap mt-1.5">
                 <span className="px-2 py-0.5 rounded-md bg-gray-900/60 dark:bg-gray-100/70 text-gray-100 dark:text-gray-900">
                     {`${currentLineRunning} / ${total} Lines`}
