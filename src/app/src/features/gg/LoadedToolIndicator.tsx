@@ -1,19 +1,27 @@
 /*
  * GGSender addition (not part of upstream gSender).
  *
- * Top-bar chip showing the tool gSender has recorded as loaded. Click it to
- * correct the number or to mark the tool as unknown.
+ * Top-bar chip showing the tool gSender has recorded as loaded, and the state
+ * of the tool sensor reference as a pictogram (correct, not correct, none).
+ * Click it to correct the tool number or to mark the tool as unknown, and to
+ * read the reference: which tool was probed, when, what a tool change will do
+ * with it, and the history (features/gg/ReferenceStatus.tsx).
  */
 import { useEffect, useRef, useState } from 'react';
 
 import store from 'app/store';
 import { formatSince, getLoadedTool, normalizeTool, setLoadedTool } from 'app/lib/gg/loadedTool';
+import { useReference } from 'app/lib/gg/probeStore';
+import { STATUS_LABEL, referenceHeadline } from 'app/lib/gg/referenceText';
+import { ReferenceIcon, ReferenceStatus } from './ReferenceStatus';
 
 export const LoadedToolIndicator = () => {
     const [loaded, setLoaded] = useState(getLoadedTool());
     const [open, setOpen] = useState(false);
     const [draft, setDraft] = useState('');
     const wrapperRef = useRef<HTMLDivElement>(null);
+    const reference = useReference();
+    const connected = reference.live; // the server sends the state while connected
 
     useEffect(() => {
         const onChange = () => setLoaded(getLoadedTool());
@@ -57,12 +65,12 @@ export const LoadedToolIndicator = () => {
                     setDraft(loaded.tool ?? '');
                     setOpen(!open);
                 }}
-                title={
+                title={`${
                     known
-                        ? `The recorded tool in the spindle${when ? ` (set ${when})` : ''}. Click to change it.`
-                        : 'The tool in the spindle is not known. Click to set it.'
-                }
-                className={`px-3 h-8 rounded-md border text-sm font-bold font-mono whitespace-nowrap ${
+                        ? `The recorded tool in the spindle${when ? ` (set ${when})` : ''}.`
+                        : 'The tool in the spindle is not known.'
+                }${connected ? ` Tool sensor: ${referenceHeadline(reference)}` : ''} Click for details.`}
+                className={`px-3 h-8 rounded-md border text-sm font-bold font-mono whitespace-nowrap flex items-center gap-1.5 ${
                     known
                         ? 'border-blue-500 text-blue-500 bg-white dark:bg-dark'
                         : 'border-gray-400 text-gray-500 bg-white dark:bg-dark dark:text-gray-300'
@@ -70,9 +78,11 @@ export const LoadedToolIndicator = () => {
                 data-testid="gg-loaded-tool"
             >
                 {known ? `T${loaded.tool}` : 'T?'}
+                {/* the tool sensor reference: correct, not correct, none */}
+                {connected && <ReferenceIcon status={reference.status} className="text-base" />}
             </button>
             {open && (
-                <div className="absolute top-10 left-0 z-[10000] w-64 p-3 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark shadow-lg text-sm text-gray-900 dark:text-gray-200 flex flex-col gap-2">
+                <div className="absolute top-10 left-0 z-[10000] w-[26rem] max-w-[90vw] p-3 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark shadow-lg text-sm text-gray-900 dark:text-gray-200 flex flex-col gap-2">
                     <div className="font-bold">Loaded tool</div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                         {known
@@ -117,6 +127,27 @@ export const LoadedToolIndicator = () => {
                     >
                         Mark as unknown
                     </button>
+                    <div className="mt-1 border-t border-gray-200 pt-2 dark:border-gray-600" data-testid="gg-reference-panel">
+                        <div className="mb-1 flex items-center gap-2 font-bold">
+                            Tool sensor reference
+                            <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
+                                {connected ? STATUS_LABEL[reference.status] : 'Not connected'}
+                            </span>
+                        </div>
+                        {connected ? (
+                            <>
+                                <ReferenceStatus snapshot={reference} effect history />
+                                <div className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                                    The reference is the height of the tool sensor above Z zero. It is correct until Z zero
+                                    changes. gSender does not keep it after a disconnection.
+                                </div>
+                            </>
+                        ) : (
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                                gSender does not keep the reference after a disconnection.
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
         </div>
