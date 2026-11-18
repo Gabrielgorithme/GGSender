@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.6.1**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.7.0**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -101,6 +101,20 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
   `String.fromCharCode(0x9E)` leaves as C2 9E. FluidNC decodes realtime input as UTF-8 and needs
   exactly that; a single raw 0x9E byte is a decoding error there and is ignored. Send these
   commands as one-character strings (as the override code does), never as a raw byte buffer.
+- **Every loaded program gets a `%wait` line appended.** `gcode:load` adds it, so the sender holds
+  one line more than the file has non-blank lines. Anything that compares line counts between the
+  interface and the server must allow for it (`programLength` in `server/lib/gg/opResets.js`).
+- **The server's job has no name.** The interface sends `gcode:load` the file name as a bare
+  string and the server reads `meta.name` from it, so `sender.state.name` is undefined. Take the
+  name from the interface (`state.file.name`).
+- **G2/G3 alone is an error.** Grbl and FluidNC refuse a G2/G3 word with no axis words (`G0`/`G1`
+  alone are fine). Fusion writes arcs modally (664 lines of the owner's file continue an arc with
+  only X Y I J), so anything that restarts the program on such a line must put the G2/G3 on it.
+- **The tool sensor reference lives in the server's memory.** The fixed-sensor wizard's first
+  change of a job probes the tool in the spindle and keeps its work Z at the sensor in
+  `global.toolchange.TOOL_OFFSET` (`controller.sharedContext`); later changes set the new tool to
+  read the same with `G10 L20 P0 Z`. It is lost on disconnection. The work offset itself is stored
+  in the controller and survives resets.
 - **No G-code during a feed hold.** Lines sent while the controller is held queue behind the held
   moves; an M3 or M5 waits for them. Anything that must happen during a hold (spindle stop) has to
   be a realtime command, and anything that waits for G-code to finish before sending `~` deadlocks.
@@ -130,6 +144,9 @@ Events worth searching for:
 | `STALL` | Job running, sender not holding, machine idle, no reply for 3 s. Followed by a state dump |
 | `workflow:` | start, pause, resume, stop, with what caused a pause or stop |
 | `hold` | The pause-as-feed-hold state after each change: held, spindle stopped, spin-up wait (0.6.0) |
+| `ops` | Operation starts received from the interface, and each override reset (or why none) (0.7.0) |
+| `homed` | The homed state read from the controller, at each change (0.7.0) |
+| `resume` | A resume from a line: the line, the entry lines, refusals, program restored (0.7.0) |
 
 Code: `src/server/lib/gg/trafficLog.js` (the file), `src/server/lib/gg/streamDiagnostics.js` (the
 events), hooks in `lib/Connection.js`, `GrblController.js`, `CNCEngine.js`, and
@@ -147,6 +164,101 @@ a simulated board that answers like Grbl: `ok` per line, a status report per `?`
 that no T word reaches the board. Extend it when changing anything in the stream path.
 
 ## Change log
+
+### 0.7.0 (on gSender 1.6.4)
+
+**Resume From** replaces upstream's *Start From* (setting *Resume from a line*,
+`workspace.gg.resumeFromLine`, default on; off gives upstream's dialog back). It does what the owner
+did by hand: keep the program's set-up, go to where the tool was from above, come down, carry on.
+- Where: an N number (`N60005`, or `L` + a file line), *Where it stopped*, or *Start of an
+  operation*. *Where it stopped* is the move the tool was on when the last run ended early:
+  gSender's line count runs ahead of the machine by FluidNC's planner queue, so the stop position
+  (work coordinates, from the last status report) is matched to the moves of the last 300 lines
+  counted. The record is kept in the settings (`workspace.gg.lastStop`) and survives a restart.
+- The program is read up to that line for units, distance and feed mode, plane (Fusion's parallel
+  passes use G18), work offset, motion mode, feed, spindle and speed, coolant, tool, and the
+  position the line starts from (the end of the previous move; unknown after G28/G53).
+- Lines sent first, all shown in the dialog before anything moves:
+  `G21 G53 G0 Z<tool change safe height>` (straight up), the modes (`G21 G90 G94 G17 G54`), an
+  optional `T.. M6`, `S.. M3` and `G4 P<spin-up>`, `M8`, `G0 X.. Y..`, `G0 Z<operation's highest
+  rapid>`, `G1 Z<start> F<operation's plunge feed>`, then the feed and motion mode. Rapid height,
+  plunge feed and spin-up can be changed in the dialog.
+- Why the way down is clear: the start point is a point the tool reached, so the column above it,
+  as wide as the tool, was empty then. True when resuming at or before where the job stopped with a
+  tool of the same diameter; a later line is flagged in the dialog (the moves in between are
+  skipped, and the way down may meet uncut material).
+- A line continuing a modal arc gets its G2/G3 written on it (see Traps).
+- Refused, with the reason: a tool change line (pick the operation's first move and tick the tool
+  change instead), at or before the program's first move, G10/G92 before the line, G91 or G93 at
+  the line, M2/M30 before it, rotary programs, too close to the start for the entry lines.
+- Tool: *untouched* (default when the tool recorded as loaded is the line's) or *change or measure
+  it first* (default otherwise), which runs the normal tool change wizard before the spindle
+  starts. If a tool sensor reference exists from this connection, the change count starts at 1 so
+  the wizard skips *Probe Initial Tool* and sets the new tool against the kept reference, which is
+  what is needed after a broken bit (probing the broken one as the reference would put every later
+  Z off by what it lost). Without one, the wizard first probes the tool in the spindle as the
+  reference; the dialog says which applies.
+- The server (`gg:resume:start`) checks the job is idle and the machine Idle, the loaded program has
+  the planned number of lines and the chosen line the planned text, and that the entry lines are
+  plain G-code. It writes them in place of the program lines just before the chosen one, so every
+  line from it on keeps its number (progress, operations list, tool card and override resets work
+  as in a normal run), and starts the job the normal way (Program Start event included). The
+  program is put back as loaded when the job stops, and before any normal start.
+Files: `lib/gg/resumePlan.ts` (the plan), `lib/gg/stopPoint.ts`, `features/gg/ResumeFromLine.tsx`;
+`server/lib/gg/resumeSplice.js`; hooks in `JobControl/index.tsx` (the button), `controllerSagas.tsx`
+(stop point), `GrblController.js` (`gcode:start`, workflow stop, commands `gg:resume:start` and
+`gg:resume:query`).
+
+**Feed and spindle overrides back to 100% at each operation** (setting *Reset overrides at each
+operation*, `workspace.gg.resetOverridesPerOp`, default on). Not at the first operation; the rapid
+override is left alone. Timing: lines are sent well ahead of the machine, so a reset sent when the
+next operation's first line goes out would land on the last cuts of the previous one. The server
+adds `G4 P0` to the operation's first move; the firmware runs a dwell only once every earlier move
+is done and before the motion of the same block (checked in FluidNC's `GCode.cpp` and
+`MotionControl.cpp`), so its `ok` arrives exactly when the previous operation has finished, and the
+resets (0x90, 0x99) go out on it, at once rather than through the 25 ms override queues. The
+feed override does not act on rapids, so the reset is invisible until the operation's first cut.
+Cost: the machine stops at the top of the retract between operations, where the corner between the
+vertical and horizontal rapids almost stops it anyway. The interface sends each operation's first
+move (sender index and text); the server uses one only if the loaded program matches, and adds the
+dwell only to a plain move. Replies are matched to lines with a queue of lines written (gSender's
+`received` count runs ahead on skipped comment lines). Files: `server/lib/gg/opResets.js`,
+`lib/gg/opBoundaries.ts`; hooks in the data filter, sender write, `ok` and error handlers.
+
+**Pre-flight: homed state from the controller** (setting *Homed state from the controller*,
+`workspace.gg.homedFromController`, default on). Upstream counts only a homing gSender sends, so a
+machine homed from the FluidDial before connecting showed *not been homed*. FluidNC has no status
+field for it, but: with `must_home` (its default) it starts in alarm and leaves it only by homing or
+`$X` (and `$X` also marks every axis homed); during homing its state is `Home`; it ends each cycle
+with `[MSG:Homed:XYZ]` on every channel, USB included. So the server counts a homing seen while
+connected that ends out of alarm, or the controller being out of alarm when gSender connects; the
+second case is shown in the pre-flight as *homed before, or unlocked with $X*. Hard limit, hard
+stop, unhomed and failed-homing alarms clear it. Only the pre-flight uses it: the rapid-position,
+go-to and parking buttons keep upstream's flag. Files: `server/lib/gg/homedState.js`,
+`lib/gg/homedStore.ts`.
+
+**Job progress as text over the 3D view.** The percentage and time left, with a soft halo, and no
+box (it held the router-bit animation removed earlier and stayed empty). The line count and cutting
+time below are unchanged. Files: `features/gg/ProgressText.tsx`, hook in `ProgressArea.tsx`.
+
+Tests added: the resume plan (the owner's manual method line by line, modal arcs, G18, unknown Z
+after G28, every refusal, units, the move nearest a stop position on lines and arcs); the stop
+record; the dialog (what it shows and sends, tool defaults, the reference message, the stop point,
+refusals, operation start); the server splice and session (indices kept, checks, restore never
+overwriting a newer program, the change count); override boundaries from the Fusion fixture, the
+dwell placement and reply matching; the homed tracker; the progress text. Simulated-board runs of
+the real controller: a board with a planner queue shows the override resets arrive after the last
+move of the first operation has run and before the first cut of the next (and nothing with the
+setting off); a pendant homing and a machine homed before connecting; a resume sends exactly the
+entry lines then the program from the chosen line to its end, is refused without sending anything
+when the program differs, restores the program on stop, and gives the wizard change count 2 with a
+reference and 1 without.
+
+Not checked: nothing run on Windows or on the machine. The resume dialog and the progress text were
+checked in rendered previews of the real components, not in the running app with a job. FluidNC's
+behaviour (dwell sync, homed messages, `$X`) comes from its current source, not the owner's
+firmware version. The resume's come-down rests on the reasoning above; the first one should be an
+air cut.
 
 ### 0.6.1 (on gSender 1.6.4)
 
@@ -490,6 +602,32 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
+## To check on the machine after installing 0.7.0
+
+Air cut first for the resume (Z zero set well above the work, or no stock), hand near the e-stop.
+
+1. Title bar shows `GGSender 0.7.0 (gSender 1.6.4)`.
+2. Home with the FluidDial, then connect gSender and load a file: the pre-flight checks the travel
+   and has a note *homed before, or unlocked with $X*. Home again from the pendant while connected:
+   the note goes away.
+3. During a job of several operations, set feed to 80% and spindle to 90%: when the next operation
+   starts, both go back to 100%, after the previous operation's last cut (the machine may stop for
+   a moment at the top of the retract). The traffic log has `# ops: "<name>" begins, reset: feed
+   spindle`.
+4. Stop a job in the middle of an operation. *Resume From*: *Where it stopped* gives the line the
+   tool was on, its operation and tool, and the lines it will send. Resume with *untouched*: the
+   tool goes straight up, the spindle spins up, moves over the point, rapids down to the operation's retract
+   height, feeds down, and carries on from that line.
+5. Resume at an N number on a line that continues an arc (`X.. Y.. I.. J..` with no G2/G3): the
+   dialog shows the line rewritten with `G3`/`G2`; it runs without error.
+6. *Change or measure it first* after a tool change earlier in the same session: the wizard goes
+   straight to *Measure New Tool*, no *Probe Initial Tool*. After reconnecting: it starts with
+   *Probe Initial Tool*, and the dialog said so.
+7. Stop the resumed job, then plain Start: the job runs from the top of the file.
+8. While a job runs: the percentage and time left are plain text over the 3D view, no box.
+9. Settings, *Resume from a line* off: upstream's *Start From*. *Reset overrides at each
+   operation* off: overrides stay across operations, no pause at the retract.
+
 ## To check on the machine after installing 0.6.1
 
 1. Title bar shows `GGSender 0.6.1 (gSender 1.6.4)`.
@@ -605,7 +743,8 @@ Do these with the spindle off or as an air cut first.
 ## Still to do (agreed with the owner)
 
 - A panel for the feed rules next to the override sliders, if Settings cannot be opened mid-job.
-- Start from a chosen tool change, rebuilding modal state.
+- Start from a chosen tool change, rebuilding modal state. (0.7.0: *Resume From* can start at any
+  operation's first move, with the tool change; left here until the owner has used it.)
 - Editable tool-change sequences (text templates instead of code).
 - Air-cut mode (temporary Z offset).
 - Publish each build as a release with `app.asar` attached; optional Windows installer built by CI.
