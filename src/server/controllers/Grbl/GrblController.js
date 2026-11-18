@@ -115,6 +115,7 @@ import {
 import { HomedState } from "../../lib/gg/homedState"; // GGSender
 import { ResumeSession, hasToolReference } from "../../lib/gg/resumeSplice"; // GGSender
 import { SentLines, errorReport, holdOnErrorPreference } from "../../lib/gg/errorHold"; // GGSender
+import { ProbeHistory } from "../../lib/gg/probeHistory"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
 	GCODE_TRANSLATION_TYPE,
@@ -313,6 +314,7 @@ class GrblController {
 		// Feeder
 		this.feeder = new Feeder({
 			dataFilter: (line, context) => {
+				this.ggProbes.onFeederLine(line, this.ggToolChangeTarget); // GGSender
 				let commentMatcher = /\s*;.*/g;
 				let comment = line.match(commentMatcher);
 				const commentString =
@@ -606,6 +608,7 @@ class GrblController {
 					if (toolNumber) {
 						this.ggCurrentTool = toolNumber;
 					}
+					this.ggToolChangeTarget = toolNumber; // GGSender: for the probe history
 
 					// GGSender: the Ignore and Code strategies never record the
 					// tool below; without the T word the firmware cannot report
@@ -641,6 +644,10 @@ class GrblController {
 										block: line,
 										tool: toolLabel,
 										option: toolChangeOption,
+										// GGSender: what decides the tool change wizard
+										// (app lib/gg/toolChangeDecision.ts)
+										ggReference: this.ggProbes.snapshot(),
+										ggResume: this.ggResume.takeToolMode(),
 									},
 									commentString,
 								);
@@ -800,6 +807,14 @@ class GrblController {
 			},
 			log: (msg) => logEvent("ops", msg),
 		});
+		// GGSender: the tool sensor reference and its history (lib/gg/probeHistory.js)
+		this.ggProbes = new ProbeHistory({
+			onChange: (state) => {
+				const last = state.history[state.history.length - 1];
+				logEvent("probe", `${state.status} ${JSON.stringify(state.reference)} last: ${JSON.stringify(last)}`);
+				this.emit("gg:probe:state", state);
+			},
+		});
 		// GGSender: job lines not yet answered, to hold at an error (lib/gg/errorHold.js)
 		this.ggSent = new SentLines();
 		// GGSender: resume from a line (lib/gg/resumeSplice.js)
@@ -866,6 +881,9 @@ class GrblController {
 
 		this.runner.on("status", (res) => {
 			this.ggHomed.onStatus(res.activeState); // GGSender
+			// GGSender: work offset changes and the tool sensor reference
+			this.ggProbes.onStatus(res.raw);
+			this.ggProbes.checkReference(_.get(this.sharedContext, "toolchange.TOOL_OFFSET"));
 			// GGSender: follow the hold; a pendant's cycle start resumes the job
 			if (
 				this.ggHold.onStatus(res) === "resumed-elsewhere" &&
@@ -1179,6 +1197,7 @@ class GrblController {
 		});
 
 		this.runner.on("parserstate", (res) => {
+			this.ggProbes.onWcs(_.get(res, "modal.wcs")); // GGSender
 			//finished searching gCode file for errors
 			if (
 				this.sender.state.finishTime > 0 &&
@@ -1716,6 +1735,7 @@ class GrblController {
 		}
 		socket.emit("homing:has-homed", this.hasHomedSet);
 		socket.emit("gg:homed", this.ggHomed.snapshot()); // GGSender
+		socket.emit("gg:probe:state", this.ggProbes.snapshot()); // GGSender
 	}
 
 	emit(eventName, ...args) {
@@ -2544,6 +2564,14 @@ class GrblController {
 					return;
 				}
 				this.command("gcode:start");
+			},
+			// GGSender: the tool gSender records as loaded, for the probe history
+			"gg:probe:loaded": () => {
+				const [tool] = args;
+				this.ggProbes.setLoadedTool(tool);
+			},
+			"gg:probe:query": () => {
+				this.emit("gg:probe:state", this.ggProbes.snapshot());
 			},
 			"gg:resume:query": () => {
 				this.emit("gg:resume:info", { toolReference: hasToolReference(this.sharedContext) });
