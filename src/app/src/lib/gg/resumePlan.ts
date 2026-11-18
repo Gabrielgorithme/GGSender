@@ -61,6 +61,8 @@ export interface ModalState {
     nextTool: string | null; // last T word
     pos: Position;
     usesA: boolean;
+    tlo: number | null; // G43.1 dynamic tool length offset set by the program; null after G49
+    absoluteArcs: boolean; // G90.1 seen (Grbl and FluidNC refuse it)
 }
 
 export interface Word {
@@ -105,6 +107,8 @@ export const initialState = (): ModalState => ({
     nextTool: null,
     pos: { x: null, y: null, z: null },
     usesA: false,
+    tlo: null,
+    absoluteArcs: false,
 });
 
 export interface LineEffect {
@@ -205,6 +209,17 @@ export const applyLine = (state: ModalState, raw: string): LineEffect => {
     const axes = (['X', 'Y', 'Z'] as const).filter((l) => get(l));
     if (get('A') || get('B') || get('C')) {
         state.usesA = true;
+    }
+    if (gs.includes('90.1')) {
+        state.absoluteArcs = true;
+    }
+    // tool length offset: its Z word is the offset, not a move
+    if (gs.includes('49')) {
+        state.tlo = null;
+    }
+    if (gs.includes('43.1')) {
+        state.tlo = get('Z')?.value ?? 0;
+        return effect;
     }
     if (gs.includes('10') || gs.includes('92') || gs.some((g) => g.startsWith('92.'))) {
         effect.offsets = true;
@@ -625,6 +640,9 @@ export const planResume = (
     if (state.feedMode !== 'G94') {
         problems.push(`Feed mode ${state.feedMode} is active at this line; only G94 (units per minute) is supported.`);
     }
+    if (state.absoluteArcs) {
+        problems.push('The program uses G90.1 (absolute arc centres), which Grbl and FluidNC do not support.');
+    }
     if (state.motion.startsWith('G38') || state.motion === 'G80') {
         problems.push(`Motion mode ${state.motion} is active at this line.`);
     }
@@ -669,10 +687,16 @@ export const planResume = (
     const where = [`line ${target + 1}`, plan.nWord, op ? `"${op.name}"` : null].filter(Boolean).join(' ');
     pre.push(`(GGSender resume at ${where.replace(/[()]/g, '')})`);
     pre.push(`G21 G53 G0 Z${fmt(options.safeZ, 'G21')}`);
-    pre.push(`${units} G90 ${state.feedMode} ${state.plane} ${state.wcs}`);
+    const modes = `${units} G90 ${state.feedMode} ${state.plane} ${state.wcs}`;
+    pre.push(modes);
     const tool = state.tool ?? state.nextTool;
     if (options.measureTool && tool !== null) {
         pre.push(`T${tool} M6`);
+        // again after the tool change wizard, whatever it leaves set
+        pre.push(modes);
+    }
+    if (state.tlo !== null) {
+        pre.push(`G43.1 Z${fmt(state.tlo, units)}`);
     }
     if (state.spindle !== 'M5') {
         pre.push(state.speed !== null ? `S${fmt(state.speed, 'G21')} ${state.spindle}` : state.spindle);

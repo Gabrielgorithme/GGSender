@@ -85,7 +85,8 @@ describe('GGSender: resume plan', () => {
 
     it('tool change first when asked', () => {
         const p = plan('N26', { measureTool: true });
-        expect(p.preamble.slice(2, 4)).toEqual(['G21 G90 G94 G17 G54', 'T45 M6']);
+        // the modes again after the wizard
+        expect(p.preamble.slice(2, 5)).toEqual(['G21 G90 G94 G17 G54', 'T45 M6', 'G21 G90 G94 G17 G54']);
     });
 
     it('options: rapid-down height and plunge feed', () => {
@@ -163,6 +164,39 @@ describe('GGSender: resume plan', () => {
         const blank = planResume(PROGRAM, analyzeJob(PROGRAM), 7, OPTS); // the blank line before the operation
         expect(blank.text).toBe('N15 T45 M6');
         expect(p.text).toBe('N26 X20 Y20 Z-2.5');
+    });
+});
+
+describe('GGSender: what broke the manual resume (XZ arcs, error:33)', () => {
+    // a Fusion parallel pass: G18 set once, then arcs with I/K and lines
+    // without any G word. Resumed without G18, every arc is an error:33.
+    const XZ = PROGRAM.replace(
+        'N27 G3 X25 Y25 I5 J0\nN28 X30 Y20 I0 J-5',
+        'N27 G18 G2 X21 Z-3 I0.5 K0\nN28 X22 Z-3.5 I0.4 K0\nN28.5 G1 X23 Z-3.4',
+    );
+    it('plane, motion mode and feed are sent before the line; the arc line gets its G2', () => {
+        const p = plan('N28', {}, XZ);
+        expect(p.ok).toBe(true);
+        expect(p.preamble).toContain('G21 G90 G94 G18 G54');
+        expect(p.target).toBe('N28 G2 X22 Z-3.5 I0.4 K0');
+        expect(p.preamble[p.preamble.length - 1]).toBe('F1200');
+        // a straight line after the arcs: G1 restored explicitly
+        const q = plan('N28.5', {}, XZ);
+        expect(q.preamble).toContain('G21 G90 G94 G18 G54');
+    });
+    it('a tool length offset set by the program is restored, and its Z is not a move', () => {
+        const tlo = PROGRAM.replace('N22 G0 Z3', 'N22 G43.1 Z1.25\nN22.5 G0 Z3');
+        const p = plan('N26', {}, tlo);
+        expect(p.preamble).toContain('G43.1 Z1.25');
+        expect(p.start.z).toBe(-2);
+        const cancelled = tlo.replace('N24 G1 Z-2 F300', 'N24 G49 G1 Z-2 F300');
+        expect(plan('N26', {}, cancelled).preamble.some((l) => l.startsWith('G43.1'))).toBe(false);
+    });
+    it('G90.1 is refused (the firmware does not support it)', () => {
+        const abs = PROGRAM.replace('N17 G17 G90 G94', 'N17 G17 G90 G94 G90.1');
+        expect(plan('N26', {}, abs).problems.join(' ')).toMatch(/G90.1/);
+        // and is not read as G90
+        expect(plan('N26', {}, abs).state.distance).toBe('G90');
     });
 });
 
