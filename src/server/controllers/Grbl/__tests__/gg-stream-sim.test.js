@@ -281,6 +281,32 @@ class PlannerBoard extends FakeBoard {
     }
 }
 
+/*
+ * A board that a pendant homes: it starts in Alarm (FluidNC with must_home)
+ * or Idle (homed before the computer was connected); home() plays a homing
+ * cycle as FluidNC reports it: state Home, then [MSG:Homed:...], then Idle.
+ */
+class HomingBoard extends FakeBoard {
+    state = 'Alarm';
+    events = [];
+
+    status() {
+        return `<${this.state}|MPos:0.000,0.000,0.000|FS:0,0>`;
+    }
+
+    emitToSockets(eventName, ...args) {
+        this.events.push([eventName, ...args]);
+    }
+
+    async home() {
+        this.state = 'Home';
+        await sleep(600);
+        this.reply('[MSG:Homed:Z]');
+        this.reply('[MSG:Homed:XY]');
+        this.state = 'Idle';
+    }
+}
+
 const makeJob = (lines) => {
     const out = ['G21', 'G90', 'T405 M6', 'M3 S12000', 'G0 Z5'];
     for (let i = 0; i < lines; i++) {
@@ -678,6 +704,37 @@ describe('GGSender: job streaming against a simulated board', () => {
             expect(board.spindleOv).toBe(90);
         } finally {
             controller.command('settings:updated', { ggResetOverridesPerOp: true });
+            await stop(controller, board);
+        }
+    });
+
+    // ---- GGSender 0.7.0: homed state from the controller -------------------
+
+    const homedEvents = (board) => board.events.filter(([e]) => e === 'gg:homed').map(([, s]) => s);
+
+    it('a machine homed before connecting: reported as homed before the connection', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, class extends HomingBoard {
+            state = 'Idle';
+        });
+        try {
+            expect(homedEvents(board)).toEqual([{ homed: true, how: 'before-connect', axes: '' }]);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('in alarm at connection, then homed from the pendant: reported as seen', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, HomingBoard);
+        try {
+            expect(homedEvents(board)).toEqual([]);
+            await board.home();
+            expect(await waitFor(() => homedEvents(board).length > 0, 3000)).toBe(true);
+            expect(homedEvents(board)).toEqual([{ homed: true, how: 'seen', axes: 'XYZ' }]);
+            // upstream's own flag is left alone
+            expect(controller.hasHomedSet).toBe(false);
+            board.reply('ALARM:1');
+            expect(homedEvents(board).pop()).toEqual({ homed: false, how: null, axes: '' });
+        } finally {
             await stop(controller, board);
         }
     });

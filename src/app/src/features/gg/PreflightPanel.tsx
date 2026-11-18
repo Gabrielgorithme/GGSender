@@ -26,6 +26,7 @@ import {
     getPreflight,
 } from 'app/lib/gg/preflightStore';
 import { LOADED_TOOL_KEY, normalizeTool } from 'app/lib/gg/loadedTool';
+import { HOMED_FROM_CONTROLLER_KEY, effectiveHomed, useHomed } from 'app/lib/gg/homedStore';
 import { requestPickLine } from './pickTopics';
 import {
     canHide,
@@ -60,7 +61,8 @@ const useContextInput = (report: PreflightReport | null) => {
     );
     const mpos = useTypedSelector((s) => get(s, 'controller.mpos', null));
     const wpos = useTypedSelector((s) => get(s, 'controller.wpos', null));
-    const hasHomed = useTypedSelector((s) => Boolean(get(s, 'controller.hasHomed', false)));
+    const upstreamHasHomed = useTypedSelector((s) => Boolean(get(s, 'controller.hasHomed', false)));
+    const fromController = useHomed();
     const isConnected = useTypedSelector((s) => Boolean(get(s, 'connection.isConnected', false)));
     const [, setTick] = useState(0);
 
@@ -85,6 +87,11 @@ const useContextInput = (report: PreflightReport | null) => {
         p ? { x: Number(p.x), y: Number(p.y), z: Number(p.z) } : null;
     const machine = toNumbers(mpos);
     const work = toNumbers(wpos);
+    const { hasHomed, beforeConnect } = effectiveHomed(
+        upstreamHasHomed,
+        fromController,
+        store.get(HOMED_FROM_CONTROLLER_KEY, true) !== false,
+    );
 
     const travel: TravelResult = checkTravel(
         report,
@@ -113,6 +120,7 @@ const useContextInput = (report: PreflightReport | null) => {
         spindleMax: Number.isFinite(spindleMax) && spindleMax > 0 ? spindleMax : null,
         feedRules: store.get('workspace.toolChange.feedRules', ''),
         travel,
+        homedBeforeConnect: beforeConnect,
     };
 };
 

@@ -286,6 +286,14 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
+                        label: 'Homed state from the controller',
+                        key: 'workspace.gg.homedFromController',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: the pre-flight travel check counts the machine as homed when the controller reports a homing (from a pendant, for example) or was already out of alarm when gSender connected. FluidNC leaves its power-up alarm only by homing or by $X, so the second case also covers an unlock without homing; the pre-flight says so. Off: only a homing sent from gSender counts (upstream). The rapid-position, go-to and parking buttons always use the upstream rule.',
+                    },
+                    {
                         label: 'Pre-flight check on file load',
                         key: 'workspace.gg.preflightOnLoad',
                         type: 'select',

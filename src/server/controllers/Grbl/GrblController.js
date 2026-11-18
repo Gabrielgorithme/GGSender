@@ -112,6 +112,7 @@ import {
 	overridesToReset,
 	resetPreference,
 } from "../../lib/gg/opResets"; // GGSender
+import { HomedState } from "../../lib/gg/homedState"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
 	GCODE_TRANSLATION_TYPE,
@@ -793,6 +794,13 @@ class GrblController {
 			},
 			log: (msg) => logEvent("ops", msg),
 		});
+		// GGSender: homed or not, from what the controller reports (lib/gg/homedState.js)
+		this.ggHomed = new HomedState({
+			onChange: (state) => {
+				logEvent("homed", JSON.stringify(state));
+				this.emit("gg:homed", state);
+			},
+		});
 		// GGSender: pause as an immediate feed hold (lib/gg/holdPause.js)
 		this.ggHold = new HoldPause({
 			write: (data) => this.write(data),
@@ -847,6 +855,7 @@ class GrblController {
 		});
 
 		this.runner.on("status", (res) => {
+			this.ggHomed.onStatus(res.activeState); // GGSender
 			// GGSender: follow the hold; a pendant's cycle start resumes the job
 			if (
 				this.ggHold.onStatus(res) === "resumed-elsewhere" &&
@@ -1063,6 +1072,7 @@ class GrblController {
 
 		this.runner.on("alarm", (res) => {
 			const code = Number(res.message) || undefined;
+			this.ggHomed.onAlarm(code); // GGSender
 			const alarm = _.find(GRBL_ALARMS, { code: code });
 
 			const { lines, received, name } = this.sender.state;
@@ -1161,6 +1171,7 @@ class GrblController {
 		});
 
 		this.runner.on("feedback", (res) => {
+			this.ggHomed.onMessage(res.raw); // GGSender: [MSG:Homed:XYZ]
 			this.emit("serialport:read", res.raw);
 		});
 
@@ -1671,6 +1682,7 @@ class GrblController {
 			socket.emit("workflow:state", this.workflow.state);
 		}
 		socket.emit("homing:has-homed", this.hasHomedSet);
+		socket.emit("gg:homed", this.ggHomed.snapshot()); // GGSender
 	}
 
 	emit(eventName, ...args) {

@@ -40,6 +40,7 @@ import {
 } from 'app/lib/gg/loadedTool'; // GGSender
 import { pushHoldSettings } from 'app/lib/gg/holdSettings'; // GGSender
 import { pushOperationBoundaries, watchOperationBoundaries } from 'app/lib/gg/opBoundaries'; // GGSender
+import { setHomed } from 'app/lib/gg/homedStore'; // GGSender
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
 import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
@@ -619,6 +620,7 @@ export function* initialize(): Generator<any, void, any> {
             reduxStore.dispatch(clearSpindles());
             // Reset homing run flag to prevent rapid position without running homing
             reduxStore.dispatch(resetHoming());
+            setHomed(null); // GGSender
 
             if (machineProfile) {
                 controller.command('machineprofile:load', machineProfile);
@@ -660,6 +662,7 @@ export function* initialize(): Generator<any, void, any> {
             reduxStore.dispatch(clearSpindles());
             // Reset homing run flag to prevent rapid position without running homing
             reduxStore.dispatch(resetHoming());
+            setHomed(null); // GGSender
             reduxStore.dispatch(closeConnection());
 
             pubsub.publish('machine:disconnected');
@@ -991,6 +994,9 @@ export function* initialize(): Generator<any, void, any> {
     controller.addListener('homing:has-homed', (hasHomed: boolean) => {
         reduxStore.dispatch(updateHasHomed({ hasHomed }));
     });
+
+    // GGSender: homed as the controller reports it (pre-flight only)
+    controller.addListener('gg:homed', (state: unknown) => setHomed(state));
 
     controller.addListener('firmware:ready', (status: string) => {
         pubsub.publish('firmware:update', status);

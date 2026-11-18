@@ -6,6 +6,7 @@ import pubsub from 'pubsub-js';
 import store from 'app/store';
 import { analyzeProgram } from 'app/lib/gg/preflight';
 import { setPreflight } from 'app/lib/gg/preflightStore';
+import { HOMED_FROM_CONTROLLER_KEY, setHomed } from 'app/lib/gg/homedStore';
 import { PreflightControl, shouldAutoOpen } from '../PreflightPanel';
 import { PICK_REQUEST } from '../pickTopics';
 
@@ -52,7 +53,9 @@ describe('GGSender: pre-flight panel', () => {
         store.set('workspace.toolChange.feedRules', '');
         store.set('workspace.gg.preflightOnLoad', 'When there are warnings');
         store.set('workspace.gg.preflightHidden', '');
+        store.set(HOMED_FROM_CONTROLLER_KEY, true);
         setPreflight(null);
+        setHomed(null);
     });
 
     it('stays closed for a clean file, and opens on demand', async () => {
@@ -92,6 +95,36 @@ describe('GGSender: pre-flight panel', () => {
 
     it('does not check travel when the machine is not homed', async () => {
         renderControl({ hasHomed: false });
+        await load(PROGRAM);
+        fireEvent.click(screen.getByTestId('gg-preflight-button'));
+        expect(screen.getByTestId('gg-preflight-travel-unchecked')).toHaveTextContent(/not been homed/);
+    });
+
+    // ---- GGSender 0.7.0: homed state from the controller ------------------
+
+    it('homed from the pendant before connecting: travel checked, with a note', async () => {
+        renderControl({ hasHomed: false });
+        act(() => setHomed({ homed: true, how: 'before-connect', axes: '' }));
+        await load(PROGRAM);
+        fireEvent.click(screen.getByTestId('gg-preflight-button'));
+        expect(screen.queryByTestId('gg-preflight-travel-unchecked')).toBeNull();
+        expect(within(screen.getByTestId('gg-preflight-travel')).getAllByText('fits')).toHaveLength(3);
+        expect(screen.getByTestId('gg-preflight-issue-HOMED_BEFORE_CONNECT')).toHaveTextContent(/unlocked with \$X/);
+    });
+
+    it('a homing reported while connected: travel checked, no note', async () => {
+        renderControl({ hasHomed: false });
+        act(() => setHomed({ homed: true, how: 'seen', axes: 'XYZ' }));
+        await load(PROGRAM);
+        fireEvent.click(screen.getByTestId('gg-preflight-button'));
+        expect(within(screen.getByTestId('gg-preflight-travel')).getAllByText('fits')).toHaveLength(3);
+        expect(screen.queryByTestId('gg-preflight-issue-HOMED_BEFORE_CONNECT')).toBeNull();
+    });
+
+    it('setting off: only a homing from gSender counts', async () => {
+        store.set(HOMED_FROM_CONTROLLER_KEY, false);
+        renderControl({ hasHomed: false });
+        act(() => setHomed({ homed: true, how: 'seen', axes: 'XYZ' }));
         await load(PROGRAM);
         fireEvent.click(screen.getByTestId('gg-preflight-button'));
         expect(screen.getByTestId('gg-preflight-travel-unchecked')).toHaveTextContent(/not been homed/);
