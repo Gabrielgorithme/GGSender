@@ -5,6 +5,7 @@
  * connection and whenever one changes.
  * - the pause-as-feed-hold (server: src/server/lib/gg/holdPause.js)
  * - overrides back to 100% at each operation (server: src/server/lib/gg/opResets.js)
+ * - hold the machine at a job error (server: src/server/lib/gg/errorHold.js)
  */
 import store from 'app/store';
 import controller from 'app/lib/controller';
@@ -34,6 +35,7 @@ export const holdSettingsPayload = (get: Get) => ({
     ggHoldStopsSpindle: get(HOLD_STOPS_SPINDLE_KEY, false) === true,
     ggResumeSpinupSeconds: spinupSeconds(get),
     ggResetOverridesPerOp: get(RESET_OVERRIDES_KEY, true) !== false,
+    ggHoldOnError: get('workspace.gg.holdOnError', true) !== false,
 });
 
 export const pushHoldSettings = () => {

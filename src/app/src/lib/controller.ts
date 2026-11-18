@@ -68,6 +68,9 @@ export interface ControllerListeners {
     'gg:toolchange:complete': Array<Function>; // GGSender
     'gg:hold:state': Array<Function>; // GGSender
     'gg:homed': Array<Function>; // GGSender
+    'gg:job:error': Array<Function>; // GGSender
+    'gg:resume:info': Array<Function>; // GGSender
+    'gg:resume:error': Array<Function>; // GGSender
     'feeder:status': Array<Function>;
     'feeder:pause': Array<Function>;
     'workflow:pause': Array<Function>;
@@ -184,6 +187,9 @@ class Controller {
         'gg:toolchange:complete': [], // GGSender
         'gg:hold:state': [], // GGSender
         'gg:homed': [], // GGSender
+        'gg:job:error': [], // GGSender
+        'gg:resume:info': [], // GGSender
+        'gg:resume:error': [], // GGSender
         'feeder:status': [],
         'feeder:pause': [],
         'workflow:pause': [],

@@ -42,6 +42,7 @@ import { pushHoldSettings } from 'app/lib/gg/holdSettings'; // GGSender
 import { pushOperationBoundaries, watchOperationBoundaries } from 'app/lib/gg/opBoundaries'; // GGSender
 import { setHomed } from 'app/lib/gg/homedStore'; // GGSender
 import { noteJobOver, noteSenderStatus } from 'app/lib/gg/stopPoint'; // GGSender
+import { showJobError } from 'app/features/gg/JobErrorNotice'; // GGSender
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
 import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
@@ -1014,6 +1015,10 @@ export function* initialize(): Generator<any, void, any> {
 
     // GGSender: homed as the controller reports it (pre-flight only)
     controller.addListener('gg:homed', (state: unknown) => setHomed(state));
+    // GGSender: a job line refused by the controller, and whether it was held
+    controller.addListener('gg:job:error', (report: any) =>
+        showJobError(report, String((reduxStore.getState() as any).file?.content ?? '')),
+    );
 
     controller.addListener('firmware:ready', (status: string) => {
         pubsub.publish('firmware:update', status);
@@ -1039,7 +1044,8 @@ export function* initialize(): Generator<any, void, any> {
                 'widgets.visualizer.showLineWarnings',
                 false,
             );
-            if (showLineWarnings && error.type === ERROR) {
+            // GGSender: not when the machine was held (features/gg/JobErrorNotice says why)
+            if (showLineWarnings && error.type === ERROR && !(error as any).ggHeld) {
                 pubsub.publish('helper:info', {
                     title: 'Invalid Line',
                     description: (

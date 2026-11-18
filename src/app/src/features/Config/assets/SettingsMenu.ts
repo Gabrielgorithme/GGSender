@@ -277,6 +277,15 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
+                        label: 'Hold the machine on a job error',
+                        key: 'workspace.gg.holdOnError',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: when the controller refuses a line of a running job (error:N), the machine gets a feed hold at once and a message shows the exact line. Upstream only stops sending, and the lines already sent after the refused one still run: after a refused arc the next move starts from the wrong place. Stop the job after such an error; resuming runs those lines. Off: upstream behaviour.',
+                        onUpdate: () => pushHoldSettings(),
+                    },
+                    {
                         label: 'Reset overrides at each operation',
                         key: 'workspace.gg.resetOverridesPerOp',
                         type: 'boolean',

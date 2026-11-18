@@ -69,6 +69,7 @@ export interface Workspace {
         homedFromController: boolean;
         resumeFromLine: boolean;
         lastStop: unknown;
+        holdOnError: boolean;
         settingsVersion: number;
     };
     toolChange: {

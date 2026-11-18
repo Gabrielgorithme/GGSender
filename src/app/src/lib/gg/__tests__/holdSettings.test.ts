@@ -21,6 +21,7 @@ describe('GGSender: pause settings', () => {
             ggHoldStopsSpindle: false,
             ggResumeSpinupSeconds: 5,
             ggResetOverridesPerOp: true,
+            ggHoldOnError: true,
         });
     });
 
@@ -29,7 +30,7 @@ describe('GGSender: pause settings', () => {
             holdSettingsPayload(
                 getter({ [PAUSE_MODE_KEY]: PAUSE_UPSTREAM, [HOLD_STOPS_SPINDLE_KEY]: true, [RESUME_SPINUP_KEY]: '8' }),
             ),
-        ).toEqual({ ggPauseMode: 'upstream', ggHoldStopsSpindle: true, ggResumeSpinupSeconds: 8, ggResetOverridesPerOp: true });
+        ).toEqual({ ggPauseMode: 'upstream', ggHoldStopsSpindle: true, ggResumeSpinupSeconds: 8, ggResetOverridesPerOp: true, ggHoldOnError: true });
         expect(holdSettingsPayload(getter({ [PAUSE_MODE_KEY]: PAUSE_HOLD })).ggPauseMode).toBe('hold');
         expect(holdSettingsPayload(getter({ [PAUSE_MODE_KEY]: 'nonsense' })).ggPauseMode).toBe('hold');
     });

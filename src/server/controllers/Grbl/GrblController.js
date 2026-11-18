@@ -114,6 +114,7 @@ import {
 } from "../../lib/gg/opResets"; // GGSender
 import { HomedState } from "../../lib/gg/homedState"; // GGSender
 import { ResumeSession, hasToolReference } from "../../lib/gg/resumeSplice"; // GGSender
+import { SentLines, errorReport, holdOnErrorPreference } from "../../lib/gg/errorHold"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
 	GCODE_TRANSLATION_TYPE,
@@ -738,6 +739,7 @@ class GrblController {
 			this.emit("serialport:read", line);
 
 			this.ggOpResets.onWritten(); // GGSender: one entry per line written
+			this.ggSent.push(this.sender.state.sent - 1, line); // GGSender
 			this.write(line + "\n");
 			log.silly(`> ${line}`);
 		});
@@ -759,6 +761,7 @@ class GrblController {
 		this.workflow.on("start", (...args) => {
 			this.emit("workflow:state", this.workflow.state);
 			this.ggOpResets.reset(); // GGSender
+			this.ggSent.reset(); // GGSender
 			this.sender.rewind();
 			this.sender.resumeCountdown();
 		});
@@ -769,6 +772,7 @@ class GrblController {
 			this.sender.stopCountdown();
 			this.ggHold.reset(); // GGSender
 			this.ggOpResets.reset(); // GGSender
+			this.ggSent.reset(); // GGSender
 			this.ggResume.restore(this.sender); // GGSender: program back as loaded
 		});
 		// GGSender: feed and spindle overrides back to 100% when the job
@@ -796,6 +800,8 @@ class GrblController {
 			},
 			log: (msg) => logEvent("ops", msg),
 		});
+		// GGSender: job lines not yet answered, to hold at an error (lib/gg/errorHold.js)
+		this.ggSent = new SentLines();
 		// GGSender: resume from a line (lib/gg/resumeSplice.js)
 		this.ggResume = new ResumeSession({ log: (msg) => logEvent("resume", msg) });
 		// GGSender: homed or not, from what the controller reports (lib/gg/homedState.js)
@@ -956,6 +962,7 @@ class GrblController {
 					this.sender.unhold();
 				}
 				this.ggOpResets.onReply(); // GGSender
+				this.ggSent.shift(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -973,6 +980,7 @@ class GrblController {
 					);
 				}
 				this.ggOpResets.onReply(); // GGSender
+				this.ggSent.shift(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -989,6 +997,26 @@ class GrblController {
 		this.runner.on("error", (res) => {
 			const code = Number(res.message) || undefined;
 			const error = _.find(GRBL_ERRORS, { code: code });
+
+			// GGSender: the first error of a running job holds the machine at
+			// once, so the lines already sent after it do not run (lib/gg/errorHold.js)
+			const ggJob =
+				this.workflow.state === WORKFLOW_STATE_RUNNING ||
+				this.workflow.state === WORKFLOW_STATE_PAUSED;
+			const ggFailed = ggJob ? this.ggSent.shift() : null;
+			const ggHeld =
+				this.workflow.state === WORKFLOW_STATE_RUNNING &&
+				holdOnErrorPreference(store.get("preferences", {}));
+			if (ggHeld) {
+				this.ggHold.hold({ stopSpindle: false });
+				// and stop sending: upstream pauses only when the interface has
+				// sent showLineWarnings, which it does only when it is on
+				this.workflow.pause({ err: `error:${code} (${error?.message})` });
+				logEvent("error-hold", `error:${code} at line ${ggFailed?.seq} "${ggFailed?.line}": machine held`);
+			}
+			if (ggJob) {
+				this.emit("gg:job:error", errorReport({ code, message: error?.message, failed: ggFailed, held: ggHeld }));
+			}
 
 			log.error(`Error occurred at ${Date.now()}`);
 
@@ -1008,7 +1036,7 @@ class GrblController {
 				line = "N/A";
 			} else if (isFileError) {
 				errorOrigin = name;
-				line = lines[received] || "";
+				line = ggFailed ? ggFailed.line : lines[received] || ""; // GGSender: the line it answers
 			} else {
 				errorOrigin = "Feeder";
 				line = "N/A";
@@ -1019,9 +1047,10 @@ class GrblController {
 				code: `${code}`,
 				description: _.get(error, "description", ""),
 				line: line,
-				lineNumber: isFileError ? received : "",
+				lineNumber: isFileError ? (ggFailed ? ggFailed.seq : received) : "", // GGSender
 				origin: errorOrigin,
 				controller: GRBL,
+				ggHeld, // GGSender: the machine was held (lib/gg/errorHold.js)
 			});
 
 			if (

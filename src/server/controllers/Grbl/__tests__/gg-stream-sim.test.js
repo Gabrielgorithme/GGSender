@@ -202,6 +202,9 @@ class HoldBoard extends FakeBoard {
  */
 class PlannerBoard extends FakeBoard {
     static PLANNER = 8;
+    held = false;
+    plane = 'G17';
+    events = [];
     rx = [];
     planner = [];
     executing = null;
@@ -229,6 +232,11 @@ class PlannerBoard extends FakeBoard {
         }
         if (text.length === 1 && text !== '\n') {
             const c = text.charCodeAt(0);
+            if (text === '!') this.held = true;
+            if (text === '~') {
+                this.held = false;
+                setImmediate(() => this.execute());
+            }
             const steps = { 0x91: 10, 0x92: -10, 0x93: 1, 0x94: -1 };
             const sSteps = { 0x9a: 10, 0x9b: -10, 0x9c: 1, 0x9d: -1 };
             if (c === 0x90) this.feedOv = 100;
@@ -255,6 +263,14 @@ class PlannerBoard extends FakeBoard {
             }
             this.rx.shift();
             this.received.push(line);
+            if (/G1[789]/.test(line)) this.plane = /G1[789]/.exec(line)[0];
+            // like FluidNC: an arc with I/K but no J read in the XY plane has
+            // a zero radius at its end point
+            if (/G[23](?![0-9])/.test(line) && /K/.test(line) && !/J/.test(line) && this.plane === 'G17') {
+                this.log.push(`ERR:${line}`);
+                this.reply('error:33');
+                continue;
+            }
             if (line === '$G') {
                 this.reply('[GC:G1 G54 G17 G21 G90 G94 M3 M9 T0 F1000 S12000]');
             }
@@ -266,8 +282,12 @@ class PlannerBoard extends FakeBoard {
         }
     }
 
+    emitToSockets(eventName, ...args) {
+        this.events.push([eventName, ...args]);
+    }
+
     execute() {
-        if (this.executing || this.planner.length === 0 || !this.isOpen) {
+        if (this.executing || this.held || this.planner.length === 0 || !this.isOpen) {
             return;
         }
         this.executing = this.planner.shift();
@@ -898,5 +918,64 @@ describe('GGSender: job streaming against a simulated board', () => {
     it('resume measuring the tool, without a reference: the wizard measures the tool in the spindle first', async () => {
         const ctx = await toolChangeCount(false);
         expect(ctx.count).toBe(1);
+    });
+
+    // ---- GGSender 0.7.0: hold the machine at a job error ---------------------
+
+    const xzArcJob = () => {
+        const out = ['G21 G90', 'M3 S12000', 'G0 X0 Y0', 'G0 Z3', 'G1 Z-1 F300'];
+        for (let i = 0; i < 60; i++) out.push(`G1 X${(i * 0.25).toFixed(2)} Y${(i % 5) * 0.2} F1000`);
+        out.push('G2 X16.529 Z-0.5 I0.4 K0'); // needs G18: error:33 in G17
+        out.push('G1 X50 Y50 F1000'); // must not run after the refused arc
+        for (let i = 0; i < 40; i++) out.push(`G1 X${50 + i} Y50`);
+        out.push('G0 Z15', 'M5');
+        return out.join('\n');
+    };
+
+    const runUntilError = async (board, controller) => {
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'xz.nc' }, xzArcJob(), {}, (err) => (err ? reject(err) : resolve()));
+        });
+        controller.command('gcode:start');
+        expect(await waitFor(() => board.log.some((e) => e.startsWith('ERR:')), 10000)).toBe(true);
+        await sleep(400);
+    };
+
+    it('an error during a job holds the machine at once: the lines after the refused one do not run', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            await runUntilError(board, controller);
+            const err = board.log.findIndex((e) => e.startsWith('ERR:'));
+            expect(board.log.slice(err).some((e) => e === 'RT:21')).toBe(true); // "!"
+            expect(board.log).not.toContain('EXEC:G1 X50 Y50 F1000');
+            expect(controller.workflow.state).toBe('paused');
+            const [, report] = board.events.find(([e]) => e === 'gg:job:error');
+            expect(report).toMatchObject({ code: 33, line: 'G2 X16.529 Z-0.5 I0.4 K0', held: true });
+            const lines = xzArcJob().split('\n');
+            expect(report.seq).toBe(lines.indexOf('G2 X16.529 Z-0.5 I0.4 K0'));
+            const [, upstream] = board.events.find(([e]) => e === 'error');
+            expect(upstream).toMatchObject({ line: 'G2 X16.529 Z-0.5 I0.4 K0', lineNumber: report.seq, ggHeld: true });
+            // Stop throws the queued lines away
+            controller.command('gcode:stop', { force: true });
+            await sleep(300);
+            expect(board.log).not.toContain('EXEC:G1 X50 Y50 F1000');
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('setting off: upstream behaviour, the lines already sent run on (the gouge)', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            controller.command('settings:updated', { ggHoldOnError: false });
+            await runUntilError(board, controller);
+            expect(board.log).not.toContain('RT:21');
+            expect(board.log).toContain('EXEC:G1 X50 Y50 F1000');
+            const [, report] = board.events.find(([e]) => e === 'gg:job:error');
+            expect(report.held).toBe(false);
+        } finally {
+            controller.command('settings:updated', { ggHoldOnError: true });
+            await stop(controller, board);
+        }
     });
 });
