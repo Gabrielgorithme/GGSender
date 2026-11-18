@@ -22,6 +22,8 @@ import { SDCardProgress } from 'app/features/JobControl/SDCardProgress.tsx';
 import { isToolProbed } from 'app/features/ATC/utils/ATCFunctions.ts';
 import cx from 'classnames';
 import HoldSpindleControl from 'app/features/gg/HoldSpindleControl'; // GGSender
+import { RESUME_SETTING_KEY, ResumeFromLine } from 'app/features/gg/ResumeFromLine'; // GGSender
+import { useStoreSetting } from 'app/features/gg/useStoreSetting'; // GGSender
 
 interface JobControlProps {
     workflow: { state: WORKFLOW_STATES_T };
@@ -66,6 +68,7 @@ const JobControl: React.FC<JobControlProps> = ({
 }) => {
     const [lastLine, setLastLine] = useState(1);
     const [pubsubTokens, setPubsubTokens] = useState([]);
+    const ggResume = useStoreSetting<boolean>(RESUME_SETTING_KEY, true); // GGSender
     //const disabled = !isConnected || !fileLoaded;
     const { state: workflowState } = workflow;
     const disabled =
@@ -229,7 +232,10 @@ const JobControl: React.FC<JobControlProps> = ({
     return (
         <>
             <SDCardProgress />
-            <div className="z-10 absolute bottom-[30%] portrait:bottom-[calc(50%+85px)] left-1/2 right-1/2 -translate-x-1/2 w-64 justify-center items-center flex">
+            {/* GGSender: flex-col, the hold control sits above the progress text */}
+            <div className="z-10 absolute bottom-[30%] portrait:bottom-[calc(50%+85px)] left-1/2 right-1/2 -translate-x-1/2 w-64 justify-center items-center flex flex-col">
+                {/* GGSender: stop/start the spindle while the job is held */}
+                <HoldSpindleControl />
                 {isConnected && fileLoaded && senderStatus?.sent > 0 && (
                     <ProgressArea
                         senderStatus={senderStatus}
@@ -248,16 +254,22 @@ const JobControl: React.FC<JobControlProps> = ({
                 >
                     <div className="flex flex-row gap-2 justify-center mb-3 w-full">
                         <OutlineButton disabled={disabled} />
-                        <StartFromLine
-                            disabled={disabled}
-                            lastLine={lastLine}
-                            atcValidator={validateFileForATC}
-                        />
+                        {/* GGSender: resume from a line replaces Start From (setting) */}
+                        {ggResume ? (
+                            <ResumeFromLine
+                                disabled={disabled}
+                                atcValidator={validateFileForATC}
+                            />
+                        ) : (
+                            <StartFromLine
+                                disabled={disabled}
+                                lastLine={lastLine}
+                                atcValidator={validateFileForATC}
+                            />
+                        )}
                     </div>
                 </div>
 
-                {/* GGSender: stop/start the spindle while the job is held */}
-                <HoldSpindleControl />
 
                 <div className="z-10 absolute top-[-30px] max-xl:top-[-34px] left-1/2 right-1/2 flex flex-row gap-2 justify-center items-center">
                     <ControlButton

@@ -107,6 +107,14 @@ import {
 	PAUSE_MODE_HOLD,
 	holdPreferences,
 } from "../../lib/gg/holdPause"; // GGSender
+import {
+	OperationResets,
+	overridesToReset,
+	resetPreference,
+} from "../../lib/gg/opResets"; // GGSender
+import { HomedState } from "../../lib/gg/homedState"; // GGSender
+import { ResumeSession, hasToolReference } from "../../lib/gg/resumeSplice"; // GGSender
+import { SentLines, errorReport, holdOnErrorPreference } from "../../lib/gg/errorHold"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
 	GCODE_TRANSLATION_TYPE,
@@ -675,6 +683,13 @@ class GrblController {
 					line = applyFeedRules(line, ggTool, ggRules);
 				}
 
+				// GGSender: overrides back to 100% at each operation (lib/gg/opResets)
+				line = this.ggOpResets.filter(line, {
+					seq: sent,
+					lines: this.sender.state.lines,
+					enabled: resetPreference(store.get("preferences", {})),
+				});
+
 				const useAaxisForGrbl = store.get("preferences.useAaxisForGrbl", false);
 
 				// If we don't need to convert A-axis to Y-axis, return the line as is since A-axis commands are given by default
@@ -723,6 +738,8 @@ class GrblController {
 
 			this.emit("serialport:read", line);
 
+			this.ggOpResets.onWritten(); // GGSender: one entry per line written
+			this.ggSent.push(this.sender.state.sent - 1, line); // GGSender
 			this.write(line + "\n");
 			log.silly(`> ${line}`);
 		});
@@ -743,6 +760,8 @@ class GrblController {
 		this.workflow = new Workflow();
 		this.workflow.on("start", (...args) => {
 			this.emit("workflow:state", this.workflow.state);
+			this.ggOpResets.reset(); // GGSender
+			this.ggSent.reset(); // GGSender
 			this.sender.rewind();
 			this.sender.resumeCountdown();
 		});
@@ -752,6 +771,45 @@ class GrblController {
 			this.sender.rewind();
 			this.sender.stopCountdown();
 			this.ggHold.reset(); // GGSender
+			this.ggOpResets.reset(); // GGSender
+			this.ggSent.reset(); // GGSender
+			this.ggResume.restore(this.sender); // GGSender: program back as loaded
+		});
+		// GGSender: feed and spindle overrides back to 100% when the job
+		// reaches the next operation (lib/gg/opResets.js)
+		this.ggOpResets = new OperationResets({
+			onReset: (op) => {
+				const [feedOV, , spindleOV] = this.state.status.ov || [];
+				const want = overridesToReset(
+					overrideBase(feedOV, this.ggLastFeedOverride),
+					overrideBase(spindleOV, this.ggLastSpindleOverride),
+				);
+				logEvent("ops", `"${op.name}" begins, reset: ${want.feed ? "feed " : ""}${want.spindle ? "spindle" : ""}${want.feed || want.spindle ? "" : "none needed"}`);
+				// at once, not through the 25 ms override queues: the
+				// operation's first cut follows its rapids closely
+				const now = Date.now();
+				if (want.feed) {
+					this.ggLastFeedOverride = { value: 100, at: now };
+					this.connection.writeImmediate(String.fromCharCode(0x90));
+					this.sender.setOvF(100);
+				}
+				if (want.spindle) {
+					this.ggLastSpindleOverride = { value: 100, at: now };
+					this.connection.writeImmediate(String.fromCharCode(0x99));
+				}
+			},
+			log: (msg) => logEvent("ops", msg),
+		});
+		// GGSender: job lines not yet answered, to hold at an error (lib/gg/errorHold.js)
+		this.ggSent = new SentLines();
+		// GGSender: resume from a line (lib/gg/resumeSplice.js)
+		this.ggResume = new ResumeSession({ log: (msg) => logEvent("resume", msg) });
+		// GGSender: homed or not, from what the controller reports (lib/gg/homedState.js)
+		this.ggHomed = new HomedState({
+			onChange: (state) => {
+				logEvent("homed", JSON.stringify(state));
+				this.emit("gg:homed", state);
+			},
 		});
 		// GGSender: pause as an immediate feed hold (lib/gg/holdPause.js)
 		this.ggHold = new HoldPause({
@@ -807,6 +865,7 @@ class GrblController {
 		});
 
 		this.runner.on("status", (res) => {
+			this.ggHomed.onStatus(res.activeState); // GGSender
 			// GGSender: follow the hold; a pendant's cycle start resumes the job
 			if (
 				this.ggHold.onStatus(res) === "resumed-elsewhere" &&
@@ -902,6 +961,8 @@ class GrblController {
 					);
 					this.sender.unhold();
 				}
+				this.ggOpResets.onReply(); // GGSender
+				this.ggSent.shift(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -918,6 +979,8 @@ class GrblController {
 						`Stop sending G-code: hold=${hold}, sent=${sent}, received=${received + 1}`,
 					);
 				}
+				this.ggOpResets.onReply(); // GGSender
+				this.ggSent.shift(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -934,6 +997,26 @@ class GrblController {
 		this.runner.on("error", (res) => {
 			const code = Number(res.message) || undefined;
 			const error = _.find(GRBL_ERRORS, { code: code });
+
+			// GGSender: the first error of a running job holds the machine at
+			// once, so the lines already sent after it do not run (lib/gg/errorHold.js)
+			const ggJob =
+				this.workflow.state === WORKFLOW_STATE_RUNNING ||
+				this.workflow.state === WORKFLOW_STATE_PAUSED;
+			const ggFailed = ggJob ? this.ggSent.shift() : null;
+			const ggHeld =
+				this.workflow.state === WORKFLOW_STATE_RUNNING &&
+				holdOnErrorPreference(store.get("preferences", {}));
+			if (ggHeld) {
+				this.ggHold.hold({ stopSpindle: false });
+				// and stop sending: upstream pauses only when the interface has
+				// sent showLineWarnings, which it does only when it is on
+				this.workflow.pause({ err: `error:${code} (${error?.message})` });
+				logEvent("error-hold", `error:${code} at line ${ggFailed?.seq} "${ggFailed?.line}": machine held`);
+			}
+			if (ggJob) {
+				this.emit("gg:job:error", errorReport({ code, message: error?.message, failed: ggFailed, held: ggHeld }));
+			}
 
 			log.error(`Error occurred at ${Date.now()}`);
 
@@ -953,7 +1036,7 @@ class GrblController {
 				line = "N/A";
 			} else if (isFileError) {
 				errorOrigin = name;
-				line = lines[received] || "";
+				line = ggFailed ? ggFailed.line : lines[received] || ""; // GGSender: the line it answers
 			} else {
 				errorOrigin = "Feeder";
 				line = "N/A";
@@ -964,9 +1047,10 @@ class GrblController {
 				code: `${code}`,
 				description: _.get(error, "description", ""),
 				line: line,
-				lineNumber: isFileError ? received : "",
+				lineNumber: isFileError ? (ggFailed ? ggFailed.seq : received) : "", // GGSender
 				origin: errorOrigin,
 				controller: GRBL,
+				ggHeld, // GGSender: the machine was held (lib/gg/errorHold.js)
 			});
 
 			if (
@@ -999,6 +1083,7 @@ class GrblController {
 				} else {
 					this.emit("serialport:read", res.raw);
 				}
+				this.ggOpResets.onReply(); // GGSender: an error answers the line too
 				this.sender.ack();
 				this.sender.next();
 
@@ -1020,6 +1105,7 @@ class GrblController {
 
 		this.runner.on("alarm", (res) => {
 			const code = Number(res.message) || undefined;
+			this.ggHomed.onAlarm(code); // GGSender
 			const alarm = _.find(GRBL_ALARMS, { code: code });
 
 			const { lines, received, name } = this.sender.state;
@@ -1118,6 +1204,7 @@ class GrblController {
 		});
 
 		this.runner.on("feedback", (res) => {
+			this.ggHomed.onMessage(res.raw); // GGSender: [MSG:Homed:XYZ]
 			this.emit("serialport:read", res.raw);
 		});
 
@@ -1628,6 +1715,7 @@ class GrblController {
 			socket.emit("workflow:state", this.workflow.state);
 		}
 		socket.emit("homing:has-homed", this.hasHomedSet);
+		socket.emit("gg:homed", this.ggHomed.snapshot()); // GGSender
 	}
 
 	emit(eventName, ...args) {
@@ -1773,6 +1861,11 @@ class GrblController {
 				] = args;
 				const totalLines = this.sender.state.total;
 				const startEventEnabled = this.event.hasEnabledEvent(PROGRAM_START);
+				// GGSender: a resume prepared by gg:resume:start, or the program as loaded
+				const ggResume = this.ggResume.take();
+				if (!ggResume) {
+					this.ggResume.restore(this.sender);
+				}
 				log.info(startEventEnabled);
 				this.emit(
 					"job:start",
@@ -1781,7 +1874,7 @@ class GrblController {
 
 				this.command("gcode", "%global.state.workspace=modal.wcs");
 
-				if (lineToStartFrom && lineToStartFrom <= totalLines) {
+				if (!ggResume && lineToStartFrom && lineToStartFrom <= totalLines) {
 					const { lines = [] } = this.sender.state;
 					const firstHalf = lines.slice(0, lineToStartFrom);
 					let feedFound = false;
@@ -1887,7 +1980,11 @@ class GrblController {
 						this.feeder.reset();
 						this.workflow.start();
 						// Sender
-						this.sender.next();
+						if (ggResume) {
+							this.ggResume.begin(this.sender, ggResume); // GGSender
+						} else {
+							this.sender.next();
+						}
 						this.feederCB = null;
 					};
 					this.event.trigger(PROGRAM_START);
@@ -1898,8 +1995,12 @@ class GrblController {
 					this.feeder.reset();
 
 					// Sender
-					this.sender.setStartLine(0);
-					this.sender.next({ startFromLine: true });
+					if (ggResume) {
+						this.ggResume.begin(this.sender, ggResume); // GGSender
+					} else {
+						this.sender.setStartLine(0);
+						this.sender.next({ startFromLine: true });
+					}
 				}
 			},
 			stop: () => {
@@ -2423,6 +2524,35 @@ class GrblController {
 				};
 
 				store.set("preferences", updated);
+			},
+			// GGSender: resume from a line, planned by the interface
+			// (lib/gg/resumeSplice.js, app lib/gg/resumePlan.ts)
+			"gg:resume:start": () => {
+				const [plan] = args;
+				const activeState = _.get(this.state, "status.activeState", "");
+				if (this.workflow.state !== WORKFLOW_STATE_IDLE || activeState !== GRBL_ACTIVE_STATE_IDLE) {
+					const why = `The machine must be idle with no job running (machine ${activeState}, job ${this.workflow.state}).`;
+					logEvent("resume", `refused: ${why}`);
+					this.emit("gg:resume:error", why);
+					return;
+				}
+				const result = this.ggResume.prepare(this.sender, plan || {}, {
+					toolReference: hasToolReference(this.sharedContext),
+				});
+				if (result.error) {
+					this.emit("gg:resume:error", result.error);
+					return;
+				}
+				this.command("gcode:start");
+			},
+			"gg:resume:query": () => {
+				this.emit("gg:resume:info", { toolReference: hasToolReference(this.sharedContext) });
+			},
+			// GGSender: the operations' first moves, from the interface's analysis
+			"gg:job:operations": () => {
+				const [payload] = args;
+				this.ggOpResets.setProgram(payload);
+				logEvent("ops", `${this.ggOpResets.boundaries.size} operation starts for "${this.ggOpResets.program.name}" (${this.ggOpResets.program.total} lines)`);
 			},
 			"toolchange:context": () => {
 				const [context] = args;

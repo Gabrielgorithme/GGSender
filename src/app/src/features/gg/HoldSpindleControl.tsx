@@ -10,6 +10,7 @@ import cx from 'classnames';
 import controller from 'app/lib/controller';
 import store from 'app/store';
 import { spinupSeconds } from 'app/lib/gg/holdSettings';
+import { TEXT_HALO } from './ProgressText';
 
 export interface HoldState {
     active: boolean;
@@ -97,9 +98,11 @@ export const HoldSpindleControl = () => {
     const secondsLeft = resumeBy === null ? null : Math.max(0, Math.ceil((resumeBy - now) / 1000));
     const display = holdDisplay(state, secondsLeft, spinupSeconds((k, d) => store.get(k, d)));
 
+    // above the progress text (JobControl renders it in the progress
+    // container: a hold always has a job, so the progress is shown too)
     return (
         <div
-            className="z-10 absolute top-[-84px] max-xl:top-[-80px] left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 whitespace-nowrap"
+            className={`flex flex-col items-center gap-1 whitespace-nowrap mb-2 ${TEXT_HALO}`}
             data-testid="gg-hold-control"
         >
             {display.button && (
@@ -121,7 +124,7 @@ export const HoldSpindleControl = () => {
                     {display.button}
                 </button>
             )}
-            <span className="text-xs text-gray-700 dark:text-gray-300" data-testid="gg-hold-caption">
+            <span className="text-xs font-medium text-gray-800 dark:text-gray-100" data-testid="gg-hold-caption">
                 {display.caption}
             </span>
         </div>

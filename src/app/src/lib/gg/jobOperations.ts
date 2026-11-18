@@ -53,6 +53,8 @@ export interface JobOperation {
     seq: number; // sender index of that line
     endSeq: number; // sender index where the next operation starts (exclusive)
     firstMotionLine: number | null; // 0-based file line of its first move
+    firstMotionSeq: number | null; // sender index of that line
+    firstMotionText: string | null; // that line, trimmed
     group: number; // index into groups
     seconds: number | null; // estimated duration
 }
@@ -328,6 +330,8 @@ export const analyzeJob = (content: string, estimates?: ArrayLike<number> | null
             seq: d.start.seq,
             endSeq: next ? next.start.seq : totalSeq,
             firstMotionLine: d.name.motion ? d.name.motion.line : null,
+            firstMotionSeq: d.name.motion ? d.name.motion.seq : null,
+            firstMotionText: d.name.motion ? lines[d.name.motion.line].trim() : null,
             group,
             seconds: sumRange(est, d.start.tok, next ? next.start.tok : totalTok),
         };

@@ -191,6 +191,151 @@ class HoldBoard extends FakeBoard {
     }
 }
 
+/*
+ * A board with a planner, like Grbl/FluidNC: a line is answered "ok" as soon
+ * as its move is queued (up to PLANNER moves), and the moves execute later,
+ * one after the other (rapids slower than the short cuts). A line with G4
+ * (dwell) is answered only once every earlier move has executed, and its own
+ * move is queued after that, as the firmware does. Overrides follow the
+ * realtime bytes. The log shows, in order, what was executed (EXEC:) and when
+ * each realtime byte arrived (RT:).
+ */
+class PlannerBoard extends FakeBoard {
+    static PLANNER = 8;
+    held = false;
+    plane = 'G17';
+    events = [];
+    rx = [];
+    planner = [];
+    executing = null;
+    feedOv = 100;
+    spindleOv = 100;
+    log = [];
+    waiting = false;
+
+    status() {
+        const state = this.rx.length > 0 || this.planner.length > 0 || this.executing ? 'Run' : 'Idle';
+        return `<${state}|MPos:0.000,0.000,0.000|FS:1000,12000|Ov:${this.feedOv},100,${this.spindleOv}>`;
+    }
+
+    write(data) {
+        const text = String(data);
+        if (text === '?') {
+            this.reply(this.status());
+            return;
+        }
+        if (text === '\x18') {
+            this.rx = [];
+            this.planner = [];
+            setTimeout(() => this.reply("Grbl 1.1f ['$' for help]"), 5);
+            return;
+        }
+        if (text.length === 1 && text !== '\n') {
+            const c = text.charCodeAt(0);
+            if (text === '!') this.held = true;
+            if (text === '~') {
+                this.held = false;
+                setImmediate(() => this.execute());
+            }
+            const steps = { 0x91: 10, 0x92: -10, 0x93: 1, 0x94: -1 };
+            const sSteps = { 0x9a: 10, 0x9b: -10, 0x9c: 1, 0x9d: -1 };
+            if (c === 0x90) this.feedOv = 100;
+            if (steps[c]) this.feedOv += steps[c];
+            if (c === 0x99) this.spindleOv = 100;
+            if (sSteps[c]) this.spindleOv += sSteps[c];
+            this.log.push(`RT:${c.toString(16)}`);
+            return;
+        }
+        text.split('\n').filter((l) => l.length > 0).forEach((l) => this.rx.push(l));
+        this.parse();
+    }
+
+    parse() {
+        while (this.isOpen && this.rx.length > 0) {
+            const line = this.rx[0];
+            const isDwell = /G0*4(?![0-9])/.test(line);
+            if (isDwell && (this.planner.length > 0 || this.executing)) {
+                return; // synchronise: wait for the moves to run out
+            }
+            const isMove = /[XYZ]-?[\d.]/.test(line) && !line.startsWith('$');
+            if (isMove && this.planner.length >= PlannerBoard.PLANNER) {
+                return; // planner full
+            }
+            this.rx.shift();
+            this.received.push(line);
+            if (/G1[789]/.test(line)) this.plane = /G1[789]/.exec(line)[0];
+            // like FluidNC: an arc with I/K but no J read in the XY plane has
+            // a zero radius at its end point
+            if (/G[23](?![0-9])/.test(line) && /K/.test(line) && !/J/.test(line) && this.plane === 'G17') {
+                this.log.push(`ERR:${line}`);
+                this.reply('error:33');
+                continue;
+            }
+            if (line === '$G') {
+                this.reply('[GC:G1 G54 G17 G21 G90 G94 M3 M9 T0 F1000 S12000]');
+            }
+            if (isMove) {
+                this.planner.push(line);
+                this.execute();
+            }
+            this.reply('ok');
+        }
+    }
+
+    emitToSockets(eventName, ...args) {
+        this.events.push([eventName, ...args]);
+    }
+
+    execute() {
+        if (this.executing || this.held || this.planner.length === 0 || !this.isOpen) {
+            return;
+        }
+        this.executing = this.planner.shift();
+        this.log.push(`EXEC:${this.executing}`);
+        const ms = /^G0 /.test(this.executing) || /G0 X/.test(this.executing) ? 12 : 2;
+        setTimeout(() => {
+            this.executing = null;
+            this.parse();
+            this.execute();
+        }, ms);
+    }
+}
+
+/*
+ * A board that a pendant homes: it starts in Alarm (FluidNC with must_home)
+ * or Idle (homed before the computer was connected); home() plays a homing
+ * cycle as FluidNC reports it: state Home, then [MSG:Homed:...], then Idle.
+ */
+class HomingBoard extends FakeBoard {
+    state = 'Alarm';
+    events = [];
+
+    status() {
+        return `<${this.state}|MPos:0.000,0.000,0.000|FS:0,0>`;
+    }
+
+    emitToSockets(eventName, ...args) {
+        this.events.push([eventName, ...args]);
+    }
+
+    async home() {
+        this.state = 'Home';
+        await sleep(600);
+        this.reply('[MSG:Homed:Z]');
+        this.reply('[MSG:Homed:XY]');
+        this.state = 'Idle';
+    }
+}
+
+/* A board that also records what the controller sends to the interface. */
+class RecordingBoard extends FakeBoard {
+    events = [];
+
+    emitToSockets(eventName, ...args) {
+        this.events.push([eventName, ...args]);
+    }
+}
+
 const makeJob = (lines) => {
     const out = ['G21', 'G90', 'T405 M6', 'M3 S12000', 'G0 Z5'];
     for (let i = 0; i < lines; i++) {
@@ -514,5 +659,323 @@ describe('GGSender: job streaming against a simulated board', () => {
             expect(realtime(board)).toEqual([]);
             expect(controller.workflow.state).toBe('paused');
         });
+    });
+
+    // ---- GGSender 0.7.0: overrides back to 100% at each operation ---------
+
+    const twoOperations = () => {
+        const out = ['(program)', 'G21 G90', 'M3 S12000', '', '(First op)', 'G0 X0 Y0', 'G0 Z3', 'G1 Z-1 F300'];
+        for (let i = 0; i < 300; i++) out.push(`G1 X${(i % 50) * 0.2} Y${(i % 7) * 0.3} F1000`);
+        out.push('G0 Z5.5', '', '(Second op)', 'G0 X20 Y0', 'G0 Z4', 'G1 Z-1.5 F300');
+        for (let i = 0; i < 300; i++) out.push(`G1 X${20 + (i % 50) * 0.2} Y${(i % 7) * 0.3} F1000`);
+        out.push('G0 Z15', 'M5');
+        return out.join('\n');
+    };
+
+    const runTwoOperations = async (board, controller) => {
+        const gcode = twoOperations();
+        const lines = gcode.split('\n').filter((l) => l.trim().length > 0);
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'ops.nc' }, gcode, {}, (err) => (err ? reject(err) : resolve()));
+        });
+        controller.command('gg:job:operations', {
+            name: 'ops.nc',
+            total: lines.length,
+            boundaries: [{ seq: lines.indexOf('G0 X20 Y0'), text: 'G0 X20 Y0', name: 'Second op' }],
+        });
+        controller.command('gcode:start');
+        // the owner slows the first operation down
+        await waitFor(() => controller.sender.state.received > 20);
+        controller.command('feedOverride', 80);
+        controller.command('spindleOverride', 90);
+        expect(await waitFor(() => controller.sender.state.received >= lines.length, 30000)).toBe(true);
+        await waitFor(() => board.planner.length === 0 && !board.executing, 3000);
+    };
+
+    it('resets feed and spindle overrides between the operations, after the first one has run out', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            await runTwoOperations(board, controller);
+            // the dwell went on the second operation's first move only
+            expect(board.received).toContain('G0 X20 Y0 G4 P0');
+            expect(board.received.filter((l) => /G4 P0$/.test(l))).toHaveLength(1);
+            // overrides were 80% and 90% during the first operation...
+            const firstOpEnd = board.log.indexOf('EXEC:G0 Z5.5');
+            const secondOpCut = board.log.indexOf('EXEC:G1 Z-1.5 F300');
+            expect(firstOpEnd).toBeGreaterThan(0);
+            const feedReset = board.log.indexOf('RT:90');
+            const spindleReset = board.log.indexOf('RT:99');
+            // ...and went back to 100 after the last move of the first one ran,
+            // before the first cut of the second one
+            expect(feedReset).toBeGreaterThan(firstOpEnd);
+            expect(feedReset).toBeLessThan(secondOpCut);
+            expect(spindleReset).toBeGreaterThan(firstOpEnd);
+            expect(spindleReset).toBeLessThan(secondOpCut);
+            expect(board.log.slice(0, firstOpEnd).filter((e) => e === 'RT:92')).toHaveLength(2); // the owner's -20%
+            expect(board.feedOv).toBe(100);
+            expect(board.spindleOv).toBe(100);
+            const log = fs.readFileSync(trafficLog.getTrafficLogFile(), 'utf8');
+            expect(log).toMatch(/"Second op" begins, reset: feed spindle/);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('setting off: no dwell added, overrides stay', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            controller.command('settings:updated', { ggResetOverridesPerOp: false });
+            await runTwoOperations(board, controller);
+            expect(board.received).toContain('G0 X20 Y0');
+            expect(board.received.some((l) => /G4/.test(l))).toBe(false);
+            expect(board.log).not.toContain('RT:90');
+            expect(board.feedOv).toBe(80);
+            expect(board.spindleOv).toBe(90);
+        } finally {
+            controller.command('settings:updated', { ggResetOverridesPerOp: true });
+            await stop(controller, board);
+        }
+    });
+
+    // ---- GGSender 0.7.0: homed state from the controller -------------------
+
+    const homedEvents = (board) => board.events.filter(([e]) => e === 'gg:homed').map(([, s]) => s);
+
+    it('a machine homed before connecting: reported as homed before the connection', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, class extends HomingBoard {
+            state = 'Idle';
+        });
+        try {
+            expect(homedEvents(board)).toEqual([{ homed: true, how: 'before-connect', axes: '' }]);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('in alarm at connection, then homed from the pendant: reported as seen', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, HomingBoard);
+        try {
+            expect(homedEvents(board)).toEqual([]);
+            await board.home();
+            expect(await waitFor(() => homedEvents(board).length > 0, 3000)).toBe(true);
+            expect(homedEvents(board)).toEqual([{ homed: true, how: 'seen', axes: 'XYZ' }]);
+            // upstream's own flag is left alone
+            expect(controller.hasHomedSet).toBe(false);
+            board.reply('ALARM:1');
+            expect(homedEvents(board).pop()).toEqual({ homed: false, how: null, axes: '' });
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    // ---- GGSender 0.7.0: resume from a line ---------------------------------
+
+    // eslint-disable-next-line global-require
+    const { planResume, resumePayload } = require('../../../../app/src/lib/gg/resumePlan');
+    // eslint-disable-next-line global-require
+    const { analyzeJob } = require('../../../../app/src/lib/gg/jobOperations');
+
+    const fusionLike = () => {
+        const out = [
+            '(prog)',
+            '(T5 D=6 CR=0 - ZMIN=-1 - flat end mill)',
+            'N10 G90 G94',
+            'N11 G17',
+            'N12 G21',
+            'N13 G28 G91 Z0',
+            'N14 G90',
+            '',
+            '(Op A)',
+            'N15 T5 M6',
+            'N16 S12000 M3',
+            'N17 G17 G90 G94',
+            'N18 G54',
+            'N19 M8',
+            'N20 G0 X0 Y0',
+            'N21 Z5',
+            'N22 G0 Z3',
+            'N23 G1 Z-1 F200',
+            'N24 G1 X10 Y0 F800',
+        ];
+        let n = 25;
+        for (let i = 0; i < 400; i++) out.push(`N${n++} X${(i % 40) * 0.25} Y${Math.floor(i / 40) * 0.5}`);
+        out.push(`N${n++} G0 Z5`, '', '(Op B)', `N${n++} G0 X20 Y0`, `N${n++} Z3`, `N${n++} G1 Z-1 F200`);
+        for (let i = 0; i < 100; i++) out.push(`N${n++} G1 X${20 + (i % 10)} Y${Math.floor(i / 10)} F800`);
+        out.push(`N${n++} G0 Z5`, `N${n++} M9`, `N${n++} M5`, `N${n++} G28 G91 Z0`, `N${n++} M30`);
+        return out.join('\n');
+    };
+
+    const loadProgram = async (controller, gcode) => {
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'resume.nc' }, gcode, {}, (err) => (err ? reject(err) : resolve()));
+        });
+        // the resume needs the machine reported Idle
+        expect(await waitFor(() => controller.state.status.activeState === 'Idle', 5000)).toBe(true);
+    };
+
+    const planFor = (gcode, n, measureTool = false) => {
+        const lines = gcode.split('\n');
+        const line = lines.findIndex((l) => l.startsWith(`${n} `));
+        const plan = planResume(gcode, analyzeJob(gcode), line, { safeZ: -0.1, measureTool, spinupSeconds: 0.2 });
+        expect(plan.ok).toBe(true);
+        const total = lines.filter((l) => l.trim().length > 0).length;
+        return { plan, payload: resumePayload(plan, total, measureTool) };
+    };
+
+    it('resume from a line: entry moves first, then the program from that line to its end', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, RecordingBoard);
+        try {
+            const gcode = fusionLike();
+            await loadProgram(controller, gcode);
+            const original = controller.sender.state.lines;
+            const { plan, payload } = planFor(gcode, 'N300');
+            const before = board.received.length;
+            controller.command('gg:resume:start', payload);
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+            const sent = board.received.slice(before).filter((l) => l !== '$G' && l !== '$$');
+            // the entry lines (the comment is not sent), then N300 onwards
+            const entry = plan.preamble.filter((l) => !l.startsWith('('));
+            expect(sent.slice(0, entry.length)).toEqual(entry);
+            expect(entry[0]).toBe('G21 G53 G0 Z-0.1');
+            expect(entry).toContain('S12000 M3');
+            expect(entry).toContain('M8');
+            expect(sent[entry.length]).toBe(plan.text);
+            expect(sent[entry.length].startsWith('N300 ')).toBe(true);
+            // nothing before N300 was sent, everything after it was
+            const nums = sent.map((l) => /^N(\d+)/.exec(l)?.[1]).filter(Boolean).map(Number);
+            expect(Math.min(...nums)).toBe(300);
+            const lastLine = gcode.split('\n').pop();
+            expect(lastLine).toMatch(/^N\d+ M30$/);
+            expect(sent[sent.length - 1]).toBe(lastLine);
+            expect(sent.some((l) => /^N(1\d\d|2\d\d) /.test(l))).toBe(false);
+            // the come-down: rapid to the operation's highest rapid height, then fed
+            const at = plan.start;
+            expect(entry).toContain(`G0 X${at.x} Y${at.y}`);
+            expect(entry).toContain('G0 Z5');
+            expect(entry).toContain(`G1 Z${at.z} F200`);
+            // stopped: the program is back as loaded
+            controller.command('gcode:stop', { force: true });
+            await sleep(200);
+            expect(controller.sender.state.lines).toBe(original);
+            const log = fs.readFileSync(trafficLog.getTrafficLogFile(), 'utf8');
+            expect(log).toMatch(/# resume: line \d+ "N300 /);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('resume refused when the loaded program is not the one planned: nothing sent, nothing changed', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, RecordingBoard);
+        try {
+            const gcode = fusionLike();
+            await loadProgram(controller, gcode);
+            const original = controller.sender.state.lines;
+            const { payload } = planFor(gcode, 'N300');
+            const before = board.received.length;
+            controller.command('gg:resume:start', { ...payload, text: 'N300 X0 Y0' });
+            controller.command('gg:resume:start', { ...payload, total: payload.total + 1 });
+            controller.command('gg:resume:start', { ...payload, preamble: ['$H'] });
+            await sleep(300);
+            expect(board.events.filter(([e]) => e === 'gg:resume:error')).toHaveLength(3);
+            expect(controller.workflow.state).toBe('idle');
+            expect(controller.sender.state.lines).toBe(original);
+            expect(board.received.slice(before).filter((l) => l !== '$G' && l !== '$$')).toEqual([]);
+            // a normal start afterwards runs the program from its first line
+            controller.command('gcode:start');
+            expect(await waitFor(() => board.received.includes('N10 G90 G94'), 5000)).toBe(true);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    const toolChangeCount = async (withReference) => {
+        const { board, controller } = await start({ toolChangeOption: 'Fixed Tool Sensor' }, RecordingBoard);
+        try {
+            const gcode = fusionLike();
+            await loadProgram(controller, gcode);
+            if (withReference) {
+                // what an earlier tool change of this connection leaves
+                controller.sharedContext.toolchange = { TOOL_OFFSET: -42.125 };
+            }
+            const { payload } = planFor(gcode, 'N300', true);
+            expect(payload.preamble).toContain('T5 M6');
+            controller.command('gg:resume:start', payload);
+            expect(await waitFor(() => board.events.some(([e]) => e === 'gcode:toolChange'), 10000)).toBe(true);
+            const [, ctx] = board.events.find(([e]) => e === 'gcode:toolChange');
+            expect(controller.workflow.state).toBe('paused'); // waiting for the wizard
+            return ctx;
+        } finally {
+            await stop(controller, board);
+        }
+    };
+
+    it('resume measuring the tool, with a reference from this connection: the wizard skips the initial probe', async () => {
+        const ctx = await toolChangeCount(true);
+        expect(ctx.count).toBe(2);
+        expect(ctx.tool).toBe('T5');
+    });
+
+    it('resume measuring the tool, without a reference: the wizard measures the tool in the spindle first', async () => {
+        const ctx = await toolChangeCount(false);
+        expect(ctx.count).toBe(1);
+    });
+
+    // ---- GGSender 0.7.0: hold the machine at a job error ---------------------
+
+    const xzArcJob = () => {
+        const out = ['G21 G90', 'M3 S12000', 'G0 X0 Y0', 'G0 Z3', 'G1 Z-1 F300'];
+        for (let i = 0; i < 60; i++) out.push(`G1 X${(i * 0.25).toFixed(2)} Y${(i % 5) * 0.2} F1000`);
+        out.push('G2 X16.529 Z-0.5 I0.4 K0'); // needs G18: error:33 in G17
+        out.push('G1 X50 Y50 F1000'); // must not run after the refused arc
+        for (let i = 0; i < 40; i++) out.push(`G1 X${50 + i} Y50`);
+        out.push('G0 Z15', 'M5');
+        return out.join('\n');
+    };
+
+    const runUntilError = async (board, controller) => {
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'xz.nc' }, xzArcJob(), {}, (err) => (err ? reject(err) : resolve()));
+        });
+        controller.command('gcode:start');
+        expect(await waitFor(() => board.log.some((e) => e.startsWith('ERR:')), 10000)).toBe(true);
+        await sleep(400);
+    };
+
+    it('an error during a job holds the machine at once: the lines after the refused one do not run', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            await runUntilError(board, controller);
+            const err = board.log.findIndex((e) => e.startsWith('ERR:'));
+            expect(board.log.slice(err).some((e) => e === 'RT:21')).toBe(true); // "!"
+            expect(board.log).not.toContain('EXEC:G1 X50 Y50 F1000');
+            expect(controller.workflow.state).toBe('paused');
+            const [, report] = board.events.find(([e]) => e === 'gg:job:error');
+            expect(report).toMatchObject({ code: 33, line: 'G2 X16.529 Z-0.5 I0.4 K0', held: true });
+            const lines = xzArcJob().split('\n');
+            expect(report.seq).toBe(lines.indexOf('G2 X16.529 Z-0.5 I0.4 K0'));
+            const [, upstream] = board.events.find(([e]) => e === 'error');
+            expect(upstream).toMatchObject({ line: 'G2 X16.529 Z-0.5 I0.4 K0', lineNumber: report.seq, ggHeld: true });
+            // Stop throws the queued lines away
+            controller.command('gcode:stop', { force: true });
+            await sleep(300);
+            expect(board.log).not.toContain('EXEC:G1 X50 Y50 F1000');
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('setting off: upstream behaviour, the lines already sent run on (the gouge)', async () => {
+        const { board, controller } = await start({ toolChangeOption: 'Ignore' }, PlannerBoard);
+        try {
+            controller.command('settings:updated', { ggHoldOnError: false });
+            await runUntilError(board, controller);
+            expect(board.log).not.toContain('RT:21');
+            expect(board.log).toContain('EXEC:G1 X50 Y50 F1000');
+            const [, report] = board.events.find(([e]) => e === 'gg:job:error');
+            expect(report.held).toBe(false);
+        } finally {
+            controller.command('settings:updated', { ggHoldOnError: true });
+            await stop(controller, board);
+        }
     });
 });

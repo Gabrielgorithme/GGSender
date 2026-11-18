@@ -39,6 +39,10 @@ import {
     trackerOnStart,
 } from 'app/lib/gg/loadedTool'; // GGSender
 import { pushHoldSettings } from 'app/lib/gg/holdSettings'; // GGSender
+import { pushOperationBoundaries, watchOperationBoundaries } from 'app/lib/gg/opBoundaries'; // GGSender
+import { setHomed } from 'app/lib/gg/homedStore'; // GGSender
+import { noteJobOver, noteSenderStatus } from 'app/lib/gg/stopPoint'; // GGSender
+import { showJobError } from 'app/features/gg/JobErrorNotice'; // GGSender
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
 import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
@@ -136,6 +140,17 @@ import get from 'lodash/get';
 import posthog from 'posthog-js';
 
 export function* initialize(): Generator<any, void, any> {
+    watchOperationBoundaries(); // GGSender: where the overrides are reset
+    // GGSender: the tool position at a stop (lib/gg/stopPoint)
+    const ggStopWhere = () => {
+        const state = reduxStore.getState() as any;
+        const c = state.controller;
+        return {
+            wpos: c?.wpos,
+            inches: String(c?.settings?.settings?.$13 ?? '0') === '1',
+            fileName: String(state.file?.name ?? ''),
+        };
+    };
     let visualizeWorker: typeof VisualizeWorker | null = null;
     let visualizeJobId = 0;
     // let estimateWorker: EstimateWorker | null = null;
@@ -552,6 +567,7 @@ export function* initialize(): Generator<any, void, any> {
         }
 
         reduxStore.dispatch(updateSenderStatus({ status }));
+        noteSenderStatus(status); // GGSender: for resume from a line
     });
 
     // GGSender: loaded tool bookkeeping for the current job
@@ -559,6 +575,10 @@ export function* initialize(): Generator<any, void, any> {
 
     controller.addListener('workflow:state', (state: WORKFLOW_STATES_T) => {
         reduxStore.dispatch(updateWorkflowState({ state }));
+        // GGSender: where a job that ended early stopped (resume from a line)
+        if (state === 'idle') {
+            noteJobOver(ggStopWhere);
+        }
         // GGSender: a job stopped in the middle of a tool change leaves an
         // unknown tool in the spindle
         if (state === 'idle' && trackerOnAbort(ggToolTracker)) {
@@ -617,6 +637,7 @@ export function* initialize(): Generator<any, void, any> {
             reduxStore.dispatch(clearSpindles());
             // Reset homing run flag to prevent rapid position without running homing
             reduxStore.dispatch(resetHoming());
+            setHomed(null); // GGSender
 
             if (machineProfile) {
                 controller.command('machineprofile:load', machineProfile);
@@ -631,6 +652,7 @@ export function* initialize(): Generator<any, void, any> {
             }
 
             pushHoldSettings(); // GGSender: what pause does
+            pushOperationBoundaries(); // GGSender: where the overrides are reset
 
             controller.command('settings:updated', { useAaxisForGrbl });
 
@@ -657,6 +679,8 @@ export function* initialize(): Generator<any, void, any> {
             reduxStore.dispatch(clearSpindles());
             // Reset homing run flag to prevent rapid position without running homing
             reduxStore.dispatch(resetHoming());
+            setHomed(null); // GGSender
+            noteJobOver(ggStopWhere); // GGSender: a job cut off by the disconnection
             reduxStore.dispatch(closeConnection());
 
             pubsub.publish('machine:disconnected');
@@ -989,6 +1013,13 @@ export function* initialize(): Generator<any, void, any> {
         reduxStore.dispatch(updateHasHomed({ hasHomed }));
     });
 
+    // GGSender: homed as the controller reports it (pre-flight only)
+    controller.addListener('gg:homed', (state: unknown) => setHomed(state));
+    // GGSender: a job line refused by the controller, and whether it was held
+    controller.addListener('gg:job:error', (report: any) =>
+        showJobError(report, String((reduxStore.getState() as any).file?.content ?? '')),
+    );
+
     controller.addListener('firmware:ready', (status: string) => {
         pubsub.publish('firmware:update', status);
     });
@@ -1013,7 +1044,8 @@ export function* initialize(): Generator<any, void, any> {
                 'widgets.visualizer.showLineWarnings',
                 false,
             );
-            if (showLineWarnings && error.type === ERROR) {
+            // GGSender: not when the machine was held (features/gg/JobErrorNotice says why)
+            if (showLineWarnings && error.type === ERROR && !(error as any).ggHeld) {
                 pubsub.publish('helper:info', {
                     title: 'Invalid Line',
                     description: (

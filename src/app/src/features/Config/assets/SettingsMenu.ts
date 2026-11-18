@@ -277,6 +277,40 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
+                        label: 'Hold the machine on a job error',
+                        key: 'workspace.gg.holdOnError',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: when the controller refuses a line of a running job (error:N), the machine gets a feed hold at once and a message shows the exact line. Upstream only stops sending, and the lines already sent after the refused one still run: after a refused arc the next move starts from the wrong place. Stop the job after such an error; resuming runs those lines. Off: upstream behaviour.',
+                        onUpdate: () => pushHoldSettings(),
+                    },
+                    {
+                        label: 'Reset overrides at each operation',
+                        key: 'workspace.gg.resetOverridesPerOp',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: when the job reaches the next operation of the file (the operations listed in the 3D view), the feed and spindle overrides go back to 100%. The rapid override is left as it is. Not at the first operation: overrides set before starting stay for it. The machine comes to a stop at the end of the previous operation (where it almost stops anyway, at the top of its retract) so the reset lands between the two operations. Off: overrides stay until changed, as in upstream gSender.',
+                        onUpdate: () => pushHoldSettings(),
+                    },
+                    {
+                        label: 'Resume from a line',
+                        key: 'workspace.gg.resumeFromLine',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: the Resume From button replaces Start From. Choose an N number (or the line where the last job stopped, or the start of an operation); the dialog shows the line, its operation and tool, and every line it will send first: up to the tool change safe height, the program\'s modes at that line, an optional tool change, spindle and spin-up wait, coolant, over the start point, rapid down to the operation\'s highest rapid height, then fed down at its plunge feed. Off: upstream Start From.',
+                    },
+                    {
+                        label: 'Homed state from the controller',
+                        key: 'workspace.gg.homedFromController',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: the pre-flight travel check counts the machine as homed when the controller reports a homing (from a pendant, for example) or was already out of alarm when gSender connected. FluidNC leaves its power-up alarm only by homing or by $X, so the second case also covers an unlock without homing; the pre-flight says so. Off: only a homing sent from gSender counts (upstream). The rapid-position, go-to and parking buttons always use the upstream rule.',
+                    },
+                    {
                         label: 'Pre-flight check on file load',
                         key: 'workspace.gg.preflightOnLoad',
                         type: 'select',

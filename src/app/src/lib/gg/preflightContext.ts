@@ -130,6 +130,9 @@ export interface ContextInput {
     spindleMax: number | null; // $30
     feedRules: string;
     travel: TravelResult;
+    // homed state known only from the controller being out of alarm when
+    // gSender connected (homed or unlocked with $X before)
+    homedBeforeConnect?: boolean;
 }
 
 export const contextIssues = (
@@ -141,6 +144,14 @@ export const contextIssues = (
     const firstChange = changes[0];
 
     // travel
+    if (ctx.homedBeforeConnect && ctx.travel.status !== 'unchecked') {
+        issues.push({
+            severity: 'info',
+            code: 'HOMED_BEFORE_CONNECT',
+            message:
+                'The controller was out of alarm when gSender connected, so it was homed before (or unlocked with $X without homing). The travel check assumes it was homed.',
+        });
+    }
     ctx.travel.axes
         .filter((a) => a.ambiguous)
         .forEach((a) => {
