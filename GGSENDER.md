@@ -115,6 +115,10 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
   `global.toolchange.TOOL_OFFSET` (`controller.sharedContext`); later changes set the new tool to
   read the same with `G10 L20 P0 Z`. It is lost on disconnection. The work offset itself is stored
   in the controller and survives resets.
+- **Upstream does not pause on errors unless told to.** The error handler pauses the job only when
+  the server's `preferences.showLineWarnings` is `false` or true; the interface sends it only when
+  it is on, so by default it is undefined and the job streams on after an error. 0.7.0's error hold
+  pauses by itself.
 - **No G-code during a feed hold.** Lines sent while the controller is held queue behind the held
   moves; an M3 or M5 waits for them. Anything that must happen during a hold (spindle stop) has to
   be a realtime command, and anything that waits for G-code to finish before sending `~` deadlocks.
@@ -147,6 +151,7 @@ Events worth searching for:
 | `ops` | Operation starts received from the interface, and each override reset (or why none) (0.7.0) |
 | `homed` | The homed state read from the controller, at each change (0.7.0) |
 | `resume` | A resume from a line: the line, the entry lines, refusals, program restored (0.7.0) |
+| `error-hold` | A job line refused by the controller, and the machine held (0.7.0) |
 
 Code: `src/server/lib/gg/trafficLog.js` (the file), `src/server/lib/gg/streamDiagnostics.js` (the
 events), hooks in `lib/Connection.js`, `GrblController.js`, `CNCEngine.js`, and
@@ -162,6 +167,25 @@ bundle is three times larger but the stack traces carry real function names.
 a simulated board that answers like Grbl: `ok` per line, a status report per `?`, `[GC:...]` then
 `ok` for `$G`, `error:38` for a tool number above 255. It checks that a job streams to the end and
 that no T word reaches the board. Extend it when changing anything in the stream path.
+
+## End-to-end run of the built app
+
+`scripts/gg/e2e/` drives the built interface and server (`dist/gsender`, after
+`scripts/gg/build.sh`) against a fake FluidNC over TCP, with Playwright's Chromium:
+
+```bash
+node scripts/gg/e2e/run-server.js /tmp/gg-e2e-home 8765 &
+node scripts/gg/e2e/fake-fluidnc.js 2323 /tmp/fake.log 25 &
+node scripts/gg/e2e/resume.js /tmp/gg-e2e src/app/src/lib/gg/__tests__/fixtures/fusion-one-of-each.nc
+node scripts/gg/e2e/error.js /tmp/gg-e2e scripts/gg/e2e/xz-arc-without-g18.nc
+```
+
+The scripts set the interface's stored settings (`localStorage` key `sienci`: Ethernet to
+127.0.0.1:2323, tool change strategy *Ignore*, no pre-flight pop-up), connect, load the file, run,
+and leave screenshots in the output folder; the fake board logs every line, realtime byte and
+executed move as JSON lines. The fake answers `ok` once a move is queued (planner of 16), runs
+moves one by one, holds on `!`, synchronises on `G4`, tracks overrides and the spindle, and refuses
+an I/K arc in G17 with `error:33`. It is a stand-in for what the fork depends on, not FluidNC.
 
 ## Change log
 
@@ -187,10 +211,17 @@ did by hand: keep the program's set-up, go to where the tool was from above, com
   as wide as the tool, was empty then. True when resuming at or before where the job stopped with a
   tool of the same diameter; a later line is flagged in the dialog (the moves in between are
   skipped, and the way down may meet uncut material).
-- A line continuing a modal arc gets its G2/G3 written on it (see Traps).
+- A line continuing a modal arc gets its G2/G3 written on it (see Traps). A line after
+  `G2`/`G3`/`G1` with no G word of its own (`X12.98 Z-0.959`) gets the motion mode and F
+  sent before it.
+- A tool length offset set by the program (`G43.1 Z..`) is restored; its Z is not read as a move.
+  When the tool change wizard runs, the modes line is sent again after it.
+- The dialog warns when the stop position is more than 0.5 mm from every move near where the job
+  had got to (jogged after the stop, or position lost).
 - Refused, with the reason: a tool change line (pick the operation's first move and tick the tool
   change instead), at or before the program's first move, G10/G92 before the line, G91 or G93 at
-  the line, M2/M30 before it, rotary programs, too close to the start for the entry lines.
+  the line, M2/M30 before it, rotary programs, G90.1 (FluidNC refuses it; arc centres are always
+  incremental there), too close to the start for the entry lines.
 - Tool: *untouched* (default when the tool recorded as loaded is the line's) or *change or measure
   it first* (default otherwise), which runs the normal tool change wizard before the spindle
   starts. If a tool sensor reference exists from this connection, the change count starts at 1 so
@@ -208,6 +239,27 @@ Files: `lib/gg/resumePlan.ts` (the plan), `lib/gg/stopPoint.ts`, `features/gg/Re
 `server/lib/gg/resumeSplice.js`; hooks in `JobControl/index.tsx` (the button), `controllerSagas.tsx`
 (stop point), `GrblController.js` (`gcode:start`, workflow stop, commands `gg:resume:start` and
 `gg:resume:query`).
+
+**The machine is held at the first error of a job** (setting *Hold the machine on a job error*,
+`workspace.gg.holdOnError`, default on). Reported by the owner: resuming by hand mid-file without
+the earlier `G18`, every XZ arc (`G2 X16.529 Z-0.5 I0.4 K0`) got `error:33` and the job went on
+streaming. Two upstream behaviours combine there:
+- gSender pauses on an error only if the server's preferences hold `showLineWarnings`, and the
+  interface sends that preference only when it is on. With it off (the default) the job keeps
+  streaming after every error.
+- Even when it pauses, it only stops sending: the lines already in FluidNC's buffer still run.
+  After a refused arc the next move starts from where the arc began: a straight line through
+  the part.
+Now the first error of a running job sends a feed hold at once (as the 0.6.0 pause does) and
+pauses the job. A message names the exact line, matched to the reply rather than gSender's line
+count, which runs ahead on comment lines. It says to stop the job, not resume it. Upstream's *Invalid Line* message ("Press Start to resume the job") is
+not shown when the machine was held. Stop flushes the queued lines (soft reset); a resume would run
+them. Files: `server/lib/gg/errorHold.js`, `features/gg/JobErrorNotice.tsx`; hooks in the
+controller's error handler and the interface's error listener.
+
+**Hold control above the progress text.** The 0.6.0 *Stop spindle* / *Start spindle* control was
+drawn over the job progress (different containers at overlapping heights; the progress box used to
+hide it). It is now stacked above the percentage.
 
 **Feed and spindle overrides back to 100% at each operation** (setting *Reset overrides at each
 operation*, `workspace.gg.resetOverridesPerOp`, default on). Not at the first operation; the rapid
@@ -252,12 +304,21 @@ move of the first operation has run and before the first cut of the next (and no
 setting off); a pendant homing and a machine homed before connecting; a resume sends exactly the
 entry lines then the program from the chosen line to its end, is refused without sending anything
 when the program differs, restores the program on stop, and gives the wizard change count 2 with a
-reference and 1 without.
+reference and 1 without; an XZ arc refused in G17 holds the machine before the next line runs (and
+with the setting off, the next line runs: the owner's gouge).
 
-Not checked: nothing run on Windows or on the machine. The resume dialog and the progress text were
-checked in rendered previews of the real components, not in the running app with a job. FluidNC's
-behaviour (dwell sync, homed messages, `$X`) comes from its current source, not the owner's
-firmware version. The resume's come-down rests on the reasoning above; the first one should be an
+The built app was also driven end to end against a fake FluidNC over Ethernet (see *End-to-end
+run of the built app*): a job stopped mid-operation, *Resume From* proposed the move the tool was
+on (0 mm away), and the board received exactly the entry lines, then the program from that line,
+with `G4 P0` on each following operation's first move; a file with an XZ arc and no `G18` was held
+at the refused line, the next line received but not run, the notice shown. That run found the two
+fixes above (stop position far from the path; hold control over the progress).
+
+Not checked: nothing run on Windows or on the machine; the end-to-end run used a simulated
+controller, not FluidNC. The tool change part of a resume was not run through the wizard (the
+end-to-end run used the *Ignore* strategy; the change count is covered by the simulated-board
+test). FluidNC's behaviour (dwell sync, homed messages, `$X`, error:33) comes from its current
+source, not the owner's firmware version. The resume's come-down rests on the reasoning above; the first one should be an
 air cut.
 
 ### 0.6.1 (on gSender 1.6.4)
@@ -624,9 +685,16 @@ Air cut first for the resume (Z zero set well above the work, or no stock), hand
    straight to *Measure New Tool*, no *Probe Initial Tool*. After reconnecting: it starts with
    *Probe Initial Tool*, and the dialog said so.
 7. Stop the resumed job, then plain Start: the job runs from the top of the file.
-8. While a job runs: the percentage and time left are plain text over the 3D view, no box.
-9. Settings, *Resume from a line* off: upstream's *Start From*. *Reset overrides at each
-   operation* off: overrides stay across operations, no pause at the retract.
+8. Error hold, in the air (Z zero well above the work): a short file with an XZ arc but no G18,
+   one line each: `G21 G90`, `G0 X0 Y0 Z5`, `G1 X10 F500`, `G2 X10.4 Z4.6 I0.4 K0`, `G1 X20`.
+   (With G18 that arc is a valid quarter circle; in G17 its end point is at zero radius, as in the
+   owner's error:33.) At the arc the machine holds (header *Hold*), the message names that line and
+   says to stop; the `G1 X20` does not run. Stop.
+9. While held (Pause, or an error), *Stop spindle* sits above the percentage, not on it.
+10. While a job runs: the percentage and time left are plain text over the 3D view, no box.
+11. Settings, *Resume from a line* off: upstream's *Start From*. *Reset overrides at each
+    operation* off: overrides stay across operations, no pause at the retract. *Hold the machine
+    on a job error* off: upstream's behaviour.
 
 ## To check on the machine after installing 0.6.1
 
