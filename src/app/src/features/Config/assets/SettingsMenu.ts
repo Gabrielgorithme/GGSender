@@ -2148,6 +2148,21 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             );
                         },
                     },
+                    {
+                        label: 'Tool change follows the tool sensor reference',
+                        type: 'boolean',
+                        key: 'workspace.gg.referenceGuard',
+                        defaultValue: true,
+                        description:
+                            'GGSender: gSender monitors the work Z offset after each probe on the tool sensor. If Z zero changed after the last probe, the reference is not correct. The next tool change then measures the tool in the spindle first. The tool change window shows the cause and lets you use the old reference. Off: a tool change after the first tool change always uses the reference (upstream). A job started with Resume From always follows the reference.',
+                        hidden: (getPending) => {
+                            const strategy = getPending(
+                                'workspace.toolChangeOption',
+                                '',
+                            );
+                            return strategy !== 'Fixed Tool Sensor';
+                        },
+                    },
                     // --------------------------------------------------------
                     {
                         label: 'Set tool change location',

@@ -91,6 +91,8 @@ const defaultState: State = {
             // where the last job stopped early (lib/gg/stopPoint); null = none
             lastStop: null,
             holdOnError: true,
+            // tool changes follow the tool sensor reference (lib/gg/toolChangeDecision)
+            referenceGuard: true,
             feedOverrideMin: '10',
             settingsVersion: 0,
             // Tool gSender believes is in the spindle; null = unknown

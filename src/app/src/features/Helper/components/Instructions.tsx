@@ -30,6 +30,7 @@ import ToolRequirementBanner from 'app/features/Helper/components/ToolRequiremen
 import PendingToolchangeNotice from 'app/features/Helper/components/PendingToolchangeNotice';
 import ResumingJobNotice from 'app/features/Helper/components/ResumingJobNotice';
 import WithToolDrawing from 'app/features/gg/ToolChangeCard'; // GGSender
+import ToolChangeReason from 'app/features/gg/ToolChangeReason'; // GGSender
 
 const getToolLabel = (toolchangeContext: Record<string, unknown> | null): string | null => {
     const backendTool =
@@ -90,6 +91,8 @@ const Instructions = () => {
                 <span className="text-gray-300 dark:text-[#9ca3af]">›</span>
                 <span className="text-gray-600 dark:text-white">{substep.title}</span>
             </div>
+            {/* GGSender: what this tool change does with the tool sensor reference, and why */}
+            <ToolChangeReason />
             {/* Warning banner — first step only */}
             {intro && activeStep === 0 && activeSubstep === 0 && !substep.toolBanner && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded bg-emerald-50 dark:bg-[#052e16] text-emerald-800 dark:text-[#6ee7b7] text-sm">

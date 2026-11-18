@@ -80,7 +80,24 @@ describe('GGSender: resume plan', () => {
         const p = plan('N26');
         expect(p.spliceSeq).toBe(p.seq - p.preamble.length);
         const payload = resumePayload(p, 30, false);
-        expect(payload).toEqual({ seq: p.seq, text: 'N26 X20 Y20 Z-2.5', total: 30, preamble: p.preamble, target: null, measureTool: false });
+        expect(payload).toEqual({
+            seq: p.seq,
+            text: 'N26 X20 Y20 Z-2.5',
+            total: 30,
+            preamble: p.preamble,
+            target: null,
+            toolMode: 'keep',
+            measureTool: false,
+        });
+    });
+
+    it('the payload carries what the tool change must do', () => {
+        const p = plan('N26', { measureTool: true });
+        expect(resumePayload(p, 30, 'reference')).toMatchObject({ toolMode: 'reference', measureTool: true });
+        expect(resumePayload(p, 30, 'measure-old')).toMatchObject({ toolMode: 'measure-old', measureTool: true });
+        expect(resumePayload(p, 30, 'full')).toMatchObject({ toolMode: 'full', measureTool: true });
+        // the 0.7.0 form
+        expect(resumePayload(p, 30, true)).toMatchObject({ toolMode: 'measure', measureTool: true });
     });
 
     it('tool change first when asked', () => {

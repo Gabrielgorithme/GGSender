@@ -115,6 +115,7 @@ import {
 import { HomedState } from "../../lib/gg/homedState"; // GGSender
 import { ResumeSession, hasToolReference } from "../../lib/gg/resumeSplice"; // GGSender
 import { SentLines, errorReport, holdOnErrorPreference } from "../../lib/gg/errorHold"; // GGSender
+import { ProbeHistory, isReferenceLine } from "../../lib/gg/probeHistory"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
 	GCODE_TRANSLATION_TYPE,
@@ -313,6 +314,7 @@ class GrblController {
 		// Feeder
 		this.feeder = new Feeder({
 			dataFilter: (line, context) => {
+				this.ggProbes.onFeederLine(line); // GGSender: the wizard's own G10 (lib/gg/probeHistory.js)
 				let commentMatcher = /\s*;.*/g;
 				let comment = line.match(commentMatcher);
 				const commentString =
@@ -367,6 +369,10 @@ class GrblController {
 					// Expression
 					// %_x=posx,_y=posy,_z=posz
 					evaluateAssignmentExpression(line.slice(1), context);
+					// GGSender: a tool was probed as the tool sensor reference
+					if (isReferenceLine(line)) {
+						this.ggProbes.onReferenceSet(_.get(this.sharedContext, "toolchange.TOOL_OFFSET"));
+					}
 					return "";
 				}
 
@@ -628,6 +634,10 @@ class GrblController {
 							this.runPreChangeHook(commentString);
 						} else {
 							const count = this.sender.incrementToolChanges();
+							// GGSender: what decides the wizard (app lib/gg/toolChangeDecision.ts):
+							// a resumed job, and what the resume asked for this change
+							const ggResume = this.ggResume.takeToolMode();
+							logEvent("probe", `tool change to ${toolLabel}, count ${count}, resumed ${ggResume.resumed}, resume mode ${ggResume.mode}, reference ${this.ggProbes.status()}`);
 
 							this.toolChanger.addInterval(() => {
 								// Emit the current state so latest tool info is available
@@ -641,6 +651,9 @@ class GrblController {
 										block: line,
 										tool: toolLabel,
 										option: toolChangeOption,
+										// GGSender: the reference as it is when the wizard opens
+										ggReference: this.ggProbes.snapshot(),
+										ggResume,
 									},
 									commentString,
 								);
@@ -774,6 +787,7 @@ class GrblController {
 			this.ggOpResets.reset(); // GGSender
 			this.ggSent.reset(); // GGSender
 			this.ggResume.restore(this.sender); // GGSender: program back as loaded
+			this.ggProbes.setWizard(null); // GGSender: no tool change wizard runs now
 		});
 		// GGSender: feed and spindle overrides back to 100% when the job
 		// reaches the next operation (lib/gg/opResets.js)
@@ -799,6 +813,18 @@ class GrblController {
 				}
 			},
 			log: (msg) => logEvent("ops", msg),
+		});
+		// GGSender: the tool sensor reference and its history (lib/gg/probeHistory.js)
+		this.ggProbes = new ProbeHistory({
+			onChange: (state) => {
+				try {
+					const last = state.history[state.history.length - 1];
+					logEvent("probe", `${state.status} reference ${JSON.stringify(state.reference)} last ${JSON.stringify(last)}`);
+				} catch (err) {
+					// diagnostics must never disturb the stream
+				}
+				this.emit("gg:probe:state", state);
+			},
 		});
 		// GGSender: job lines not yet answered, to hold at an error (lib/gg/errorHold.js)
 		this.ggSent = new SentLines();
@@ -866,6 +892,11 @@ class GrblController {
 
 		this.runner.on("status", (res) => {
 			this.ggHomed.onStatus(res.activeState); // GGSender
+			// GGSender: a change of the work Z offset, against the tool sensor reference
+			this.ggProbes.onStatus(res.raw, {
+				inches: _.get(this.settings, "settings.$13") === "1",
+				jobRunning: this.workflow.state === WORKFLOW_STATE_RUNNING,
+			});
 			// GGSender: follow the hold; a pendant's cycle start resumes the job
 			if (
 				this.ggHold.onStatus(res) === "resumed-elsewhere" &&
@@ -1179,6 +1210,7 @@ class GrblController {
 		});
 
 		this.runner.on("parserstate", (res) => {
+			this.ggProbes.onWcs(_.get(res, "modal.wcs")); // GGSender
 			//finished searching gCode file for errors
 			if (
 				this.sender.state.finishTime > 0 &&
@@ -1716,6 +1748,7 @@ class GrblController {
 		}
 		socket.emit("homing:has-homed", this.hasHomedSet);
 		socket.emit("gg:homed", this.ggHomed.snapshot()); // GGSender
+		socket.emit("gg:probe:state", this.ggProbes.snapshot()); // GGSender
 	}
 
 	emit(eventName, ...args) {
@@ -2536,9 +2569,7 @@ class GrblController {
 					this.emit("gg:resume:error", why);
 					return;
 				}
-				const result = this.ggResume.prepare(this.sender, plan || {}, {
-					toolReference: hasToolReference(this.sharedContext),
-				});
+				const result = this.ggResume.prepare(this.sender, plan || {});
 				if (result.error) {
 					this.emit("gg:resume:error", result.error);
 					return;
@@ -2547,6 +2578,21 @@ class GrblController {
 			},
 			"gg:resume:query": () => {
 				this.emit("gg:resume:info", { toolReference: hasToolReference(this.sharedContext) });
+				this.emit("gg:probe:state", this.ggProbes.snapshot());
+			},
+			// GGSender: the tool sensor reference (lib/gg/probeHistory.js): the tool
+			// the interface records as loaded, the wizard it is about to run
+			"gg:probe:loaded": () => {
+				const [tool] = args;
+				this.ggProbes.setLoadedTool(tool);
+			},
+			"gg:probe:wizard": () => {
+				const [wizard] = args;
+				this.ggProbes.setWizard(wizard);
+				logEvent("probe", `wizard ${JSON.stringify(wizard || null)}`);
+			},
+			"gg:probe:query": () => {
+				this.emit("gg:probe:state", this.ggProbes.snapshot());
 			},
 			// GGSender: the operations' first moves, from the interface's analysis
 			"gg:job:operations": () => {

@@ -21,14 +21,21 @@
  * any normal start. Only the array this module installed is ever replaced: a
  * program loaded in between is left alone.
  *
- * Tool reference: gSender's tool sensor change measures, at the first change
- * of a job, the tool already in the spindle and keeps the work Z it reads at
- * the sensor (global.toolchange.TOOL_OFFSET); every later change sets the new
- * tool to read the same. After a broken tool, re-measuring the broken one
- * as that reference would put every following Z off by what it lost. So when
- * the resume measures the tool and a reference from this connection exists,
- * the job's change count starts at 1 and the wizard goes straight to the new
- * tool.
+ * Tool: the interface says what to do with the tool (plan.toolMode):
+ * - 'keep': nothing, the entry lines have no tool change;
+ * - 'measure': the new tool is measured against the tool sensor reference;
+ * - 'measure-old': the same, and the owner accepted a reference that is for
+ *   an earlier Z zero (Z zero goes back to it);
+ * - 'full': the tool in the spindle is measured first as the reference,
+ *   then the new tool is fitted and measured;
+ * - 'reference': the tool in the spindle is measured as the new reference
+ *   and nothing else changes (Z zero was set by hand with it).
+ * The mode is handed once to the tool change of the entry lines
+ * (takeToolMode). A resumed job is marked as such until it stops, so that no
+ * tool change in it is taken for "the first tool of a job, already in the
+ * spindle" (upstream's First tool setting): that would measure the old tool
+ * and carry on without asking for the new one. The interface decides the
+ * wizard from this (app lib/gg/toolChangeDecision.ts).
  */
 import { programLength } from './opResets';
 
@@ -87,17 +94,38 @@ export const hasToolReference = (sharedContext) => {
     return v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v));
 };
 
+export const TOOL_MODES = ['keep', 'measure', 'measure-old', 'full', 'reference'];
+
+/** The tool mode of a plan; a plan from before 0.7.1 only has measureTool. */
+export const toolModeOf = (plan = {}) => {
+    if (TOOL_MODES.includes(plan.toolMode)) {
+        return plan.toolMode;
+    }
+    return plan.measureTool === true ? 'measure' : 'keep';
+};
+
 export class ResumeSession {
     constructor({ log = () => {} } = {}) {
         this.log = log;
-        this.pending = null; // { from, skipInitialProbe }
+        this.pending = null; // { from, toolMode }
         this.original = null; // the program lines as loaded
         this.spliced = null; // the array installed in the sender
+        this.resumed = false; // the job running was started by a resume
+        this.toolMode = null; // for the tool change of the entry lines, once
     }
 
     /** Install the entry lines; the next gcode:start resumes. */
-    prepare(sender, plan, { toolReference = false } = {}) {
+    prepare(sender, plan) {
         this.restore(sender);
+        const toolMode = toolModeOf(plan);
+        const hasChange = Array.isArray(plan?.preamble) && plan.preamble.some((l) => /\bM0*6\b/i.test(String(l).replace(/\([^)]*\)/g, ' ')));
+        if (hasChange !== (toolMode !== 'keep')) {
+            const error = hasChange
+                ? 'The entry lines have a tool change, but the plan keeps the tool.'
+                : 'The plan measures the tool, but the entry lines have no tool change.';
+            this.log(`refused: ${error}`);
+            return { error };
+        }
         const result = spliceResume(sender?.state?.lines, plan);
         if (result.error) {
             this.log(`refused: ${result.error}`);
@@ -106,12 +134,11 @@ export class ResumeSession {
         this.original = sender.state.lines;
         this.spliced = result.lines;
         sender.state.lines = result.lines;
-        const skipInitialProbe = plan.measureTool === true && toolReference;
-        this.pending = { from: result.from, skipInitialProbe };
+        this.pending = { from: result.from, toolMode };
         this.log(
-            `line ${plan.seq} "${plan.text}", entry lines from ${result.from}: ${[...plan.preamble, plan.target]
+            `line ${plan.seq} "${plan.text}", tool: ${toolMode}, entry lines from ${result.from}: ${[...plan.preamble, plan.target]
                 .filter(Boolean)
-                .join(' | ')}${plan.measureTool ? `, tool change ${skipInitialProbe ? 'against the reference of this connection' : 'with a new reference'}` : ''}`,
+                .join(' | ')}`,
         );
         return result;
     }
@@ -125,16 +152,27 @@ export class ResumeSession {
 
     /** Start streaming from the entry lines (after workflow.start()). */
     begin(sender, pending) {
+        this.resumed = true;
+        this.toolMode = pending.toolMode === 'keep' ? null : pending.toolMode;
         sender.setStartLine(pending.from);
-        if (pending.skipInitialProbe) {
-            sender.state.toolChanges = 1;
-        }
         sender.next({ startFromLine: true });
+    }
+
+    /**
+     * For a tool change of the job running: was the job resumed, and what the
+     * resume asked for this change (only the first one after the resume).
+     */
+    takeToolMode() {
+        const mode = this.toolMode;
+        this.toolMode = null;
+        return { resumed: this.resumed, mode: this.resumed ? mode : null };
     }
 
     /** Put the program back as loaded, if it is still the one spliced. */
     restore(sender) {
         this.pending = null;
+        this.resumed = false;
+        this.toolMode = null;
         if (this.spliced && sender?.state && sender.state.lines === this.spliced) {
             sender.state.lines = this.original;
             this.log('program lines restored');

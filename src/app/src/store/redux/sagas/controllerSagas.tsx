@@ -44,7 +44,9 @@ import { setHomed } from 'app/lib/gg/homedStore'; // GGSender
 import { noteJobOver, noteSenderStatus } from 'app/lib/gg/stopPoint'; // GGSender
 import { showJobError } from 'app/features/gg/JobErrorNotice'; // GGSender
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
-import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
+// GGSender: the Fixed Tool Sensor wizard follows the tool sensor reference
+import { FIXED_SENSOR_TITLE, chooseFixedSensorWizard } from 'app/features/gg/toolChangeFlow';
+import { pushLoadedTool, setReference, watchLoadedTool } from 'app/lib/gg/probeStore';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
 // TODO: add worker types
 // @ts-ignore
@@ -141,6 +143,7 @@ import posthog from 'posthog-js';
 
 export function* initialize(): Generator<any, void, any> {
     watchOperationBoundaries(); // GGSender: where the overrides are reset
+    watchLoadedTool(); // GGSender: the recorded tool, for the server's probe history
     // GGSender: the tool position at a stop (lib/gg/stopPoint)
     const ggStopWhere = () => {
         const state = reduxStore.getState() as any;
@@ -653,6 +656,8 @@ export function* initialize(): Generator<any, void, any> {
 
             pushHoldSettings(); // GGSender: what pause does
             pushOperationBoundaries(); // GGSender: where the overrides are reset
+            pushLoadedTool(true); // GGSender: for the probe history
+            controller.command('gg:probe:query'); // GGSender
 
             controller.command('settings:updated', { useAaxisForGrbl });
 
@@ -680,6 +685,7 @@ export function* initialize(): Generator<any, void, any> {
             // Reset homing run flag to prevent rapid position without running homing
             reduxStore.dispatch(resetHoming());
             setHomed(null); // GGSender
+            setReference(null); // GGSender: the reference is not kept across a reconnection
             noteJobOver(ggStopWhere); // GGSender: a job cut off by the disconnection
             reduxStore.dispatch(closeConnection());
 
@@ -790,11 +796,14 @@ export function* initialize(): Generator<any, void, any> {
                     title = 'Flexible Re-zero Tool Change';
                     instructions = semiautoToolChange(count);
                 } else if (option === 'Fixed Tool Sensor') {
-                    title = 'Fixed Tool Sensor Tool Change';
-                    instructions = await determineFixedSensorInstructions(
-                        count,
-                        comment,
-                    );
+                    // GGSender: the wizard is decided from the tool sensor
+                    // reference and from what a resume asked for, not only
+                    // from the count (lib/gg/toolChangeDecision.ts). Upstream:
+                    // determineFixedSensorInstructions(count, comment)
+                    title = FIXED_SENSOR_TITLE;
+                    const gg = await chooseFixedSensorWizard(context, comment);
+                    instructions = gg.instructions;
+                    payload.context = gg.context;
                 } else {
                     console.error('Invalid toolchange option passed');
                     return;
@@ -1011,6 +1020,11 @@ export function* initialize(): Generator<any, void, any> {
 
     controller.addListener('homing:has-homed', (hasHomed: boolean) => {
         reduxStore.dispatch(updateHasHomed({ hasHomed }));
+    });
+
+    // GGSender: the tool sensor reference and its history (lib/gg/probeStore)
+    controller.addListener('gg:probe:state', (state: unknown) => {
+        setReference(state);
     });
 
     // GGSender: homed as the controller reports it (pre-flight only)

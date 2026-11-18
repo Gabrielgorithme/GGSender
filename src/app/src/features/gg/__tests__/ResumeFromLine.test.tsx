@@ -8,6 +8,8 @@ import { analyzeJob } from 'app/lib/gg/jobOperations';
 import { setJobInfo } from 'app/lib/gg/jobInfoStore';
 import { LOADED_TOOL_KEY } from 'app/lib/gg/loadedTool';
 import { LAST_STOP_KEY } from 'app/lib/gg/stopPoint';
+import { getLoadedTool } from 'app/lib/gg/loadedTool';
+import { setReference } from 'app/lib/gg/probeStore';
 
 const mockCommands: any[][] = [];
 const mockListeners: Record<string, Function[]> = {};
@@ -74,8 +76,26 @@ const renderButton = () =>
 
 const open = () => fireEvent.click(screen.getByTestId('gg-resume-button'));
 const type = (v: string) => fireEvent.change(screen.getByTestId('gg-resume-query'), { target: { value: v } });
-const serverSays = (event: string, data: unknown) => act(() => (mockListeners[event] || []).forEach((f) => f(data)));
 const started = () => mockCommands.filter(([c]) => c === 'gg:resume:start').map(([, p]) => p);
+
+const at = (h: number, m: number) => {
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+};
+const VALID: Record<string, any> = {
+    status: 'valid',
+    reference: { value: -15.002, tool: '45', at: at(14, 32), wcs: 'G54', wcoZ: -50 },
+    lastProbe: { kind: 'reference', tool: '45', at: at(14, 32) },
+    stale: null,
+    watching: true,
+    wcs: 'G54',
+    history: [],
+};
+const STALE: Record<string, any> = { ...VALID, status: 'stale', stale: { kind: 'zero', at: at(14, 40), deltaZ: -8 } };
+const NONE: Record<string, any> = { status: 'none', reference: null, lastProbe: null, stale: null, watching: true, wcs: 'G54', history: [] };
+const reference = (s: unknown) => act(() => setReference(s));
+const startButton = () => screen.getByTestId('gg-resume-start');
 
 describe('GGSender: Resume From dialog', () => {
     beforeEach(() => {
@@ -85,12 +105,13 @@ describe('GGSender: Resume From dialog', () => {
         store.set('workspace.toolChange.safeZ', -0.1);
         store.set('workspace.gg.resumeSpinupSeconds', 5);
         act(() => setJobInfo(analyzeJob(PROGRAM), 'job.nc'));
+        reference(VALID);
     });
 
     it('shows the line, its operation, and every line it sends; Resume sends the plan', () => {
         renderButton();
         open();
-        expect(mockCommands).toContainEqual(['gg:resume:query']);
+        expect(mockCommands).toContainEqual(['gg:probe:query']);
         type('N26');
         const ctx = screen.getByTestId('gg-resume-context');
         expect(ctx).toHaveTextContent('▶ N26 X20 Y20 Z-2.5');
@@ -115,35 +136,151 @@ describe('GGSender: Resume From dialog', () => {
         expect(screen.getByTestId('gg-resume-tool-keep')).toBeChecked();
         fireEvent.click(screen.getByTestId('gg-resume-start'));
         expect(started()).toEqual([
-            { seq: 19, text: 'N26 X20 Y20 Z-2.5', total: TOTAL, preamble: pre.split('\n'), target: null, measureTool: false },
+            { seq: 19, text: 'N26 X20 Y20 Z-2.5', total: TOTAL, preamble: pre.split('\n'), target: null, toolMode: 'keep', measureTool: false },
         ]);
         expect(screen.queryByTestId('gg-resume-dialog')).toBeNull();
     });
 
-    it('another tool recorded as loaded: tool change first, and says which reference the wizard uses', () => {
+    it('shows the reference at a glance: the tool, the time, and whether it is correct', () => {
+        renderButton();
+        open();
+        type('N26');
+        const block = screen.getByTestId('gg-resume-reference');
+        expect(block).toHaveTextContent('Reference: T45, probed at 14:32. Z zero did not change after that.');
+        expect(within(block).getByTestId('gg-reference-icon-valid')).toBeInTheDocument();
+        reference(STALE);
+        expect(block).toHaveTextContent('Z zero changed at 14:40, after the last probe (T45, 14:32). The reference is not correct now.');
+        expect(within(block).getByTestId('gg-reference-icon-stale')).toBeInTheDocument();
+        reference(NONE);
+        expect(block).toHaveTextContent('No reference.');
+        expect(within(block).getByTestId('gg-reference-icon-none')).toBeInTheDocument();
+    });
+
+    it('three choices, each saying what happens to the tool and to Z zero', () => {
+        renderButton();
+        open();
+        type('N26');
+        const dialog = screen.getByTestId('gg-resume-dialog');
+        expect(dialog).toHaveTextContent('1. Same tool. Z zero did not change.');
+        expect(dialog).toHaveTextContent('T45 is in the spindle. gSender measures nothing.');
+        expect(dialog).toHaveTextContent('2. New or refitted tool. Z zero did not change.');
+        expect(dialog).toHaveTextContent('You fit T45. gSender measures it against the reference (T45, 14:32). Z zero stays at the same position on the part.');
+        expect(dialog).toHaveTextContent('3. I set Z zero again by hand, with this tool in the spindle.');
+        expect(dialog).toHaveTextContent('gSender measures T45 on the tool sensor. It becomes the new reference. Z zero does not change.');
+    });
+
+    it('choice 2 with a valid reference: tool change first, measured against the reference', () => {
+        store.set(LOADED_TOOL_KEY, { tool: '7', since: 1 });
+        renderButton();
+        open();
+        type('N26');
+        // another tool is recorded: 2 by default
+        expect(screen.getByTestId('gg-resume-tool-measure')).toBeChecked();
+        expect(screen.getByTestId('gg-resume-preamble')).toHaveTextContent('T45 M6');
+        expect(screen.queryByTestId('gg-resume-source')).toBeNull();
+        fireEvent.click(startButton());
+        expect(started()[0]).toMatchObject({ toolMode: 'measure', measureTool: true });
+        expect(started()[0].preamble).toContain('T45 M6');
+    });
+
+    it('the owner\'s case: Z zero set by hand after a broken bit. 3 is selected; the tool is measured as the new reference', () => {
+        reference(STALE);
+        renderButton();
+        open();
+        type('N26');
+        expect(screen.getByTestId('gg-resume-tool-reference')).toBeChecked();
+        expect(screen.getByTestId('gg-resume-preamble')).toHaveTextContent('T45 M6');
+        expect(startButton()).toBeEnabled();
+        fireEvent.click(startButton());
+        expect(started()[0]).toMatchObject({ toolMode: 'reference', measureTool: true });
+    });
+
+    it('choice 2 after Z zero changed: not possible without a second answer, and the old reference carries a warning', () => {
+        reference(STALE);
+        renderButton();
+        open();
+        type('N26');
+        fireEvent.click(screen.getByTestId('gg-resume-tool-measure'));
+        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('The reference is not correct now: Z zero changed at 14:40.');
+        expect(startButton()).toBeDisabled();
+        expect(screen.getByTestId('gg-resume-tool-needed')).toHaveTextContent('Select how gSender gets a reference.');
+        const sources = screen.getByTestId('gg-resume-source');
+        expect(sources).toHaveTextContent('If the old tool is broken or removed: set Z zero by hand with the new tool. Then use option 3.');
+        // the old reference: Z zero goes back, said in so many words
+        expect(sources).toHaveTextContent('Use the old reference (T45, 14:32). WARNING: Z zero goes back to its position of 14:32. The Z zero of 14:40 is lost.');
+        fireEvent.click(screen.getByTestId('gg-resume-source-old-reference'));
+        expect(startButton()).toBeEnabled();
+        fireEvent.click(startButton());
+        expect(started()[0].toolMode).toBe('measure-old');
+    });
+
+    it('choice 2 after Z zero changed, old tool still in the spindle: it is measured first', () => {
+        reference(STALE);
+        renderButton();
+        open();
+        type('N26');
+        fireEvent.click(screen.getByTestId('gg-resume-tool-measure'));
+        fireEvent.click(screen.getByTestId('gg-resume-source-old-tool'));
+        fireEvent.click(startButton());
+        expect(started()[0].toolMode).toBe('full');
+    });
+
+    it('no reference (after a reconnection), same tool: 1 by default, with the hint that 3 measures it now', () => {
+        reference(NONE);
+        renderButton();
+        open();
+        type('N26');
+        expect(screen.getByTestId('gg-resume-tool-keep')).toBeChecked();
+        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('There is no reference now. Option 3 also measures this tool as the reference, and does not change Z zero.');
+        fireEvent.click(startButton());
+        expect(started()[0].toolMode).toBe('keep');
+    });
+
+    it('no reference, another tool recorded: nothing selected, Resume waits; choice 2 can only measure the old tool first', () => {
+        reference(NONE);
+        store.set(LOADED_TOOL_KEY, { tool: '7', since: 1 });
+        renderButton();
+        open();
+        type('N26');
+        expect(screen.getByTestId('gg-resume-tool-keep')).not.toBeChecked();
+        expect(screen.getByTestId('gg-resume-tool-measure')).not.toBeChecked();
+        expect(screen.getByTestId('gg-resume-tool-reference')).not.toBeChecked();
+        expect(startButton()).toBeDisabled();
+        expect(screen.getByTestId('gg-resume-tool-needed')).toHaveTextContent('gSender recorded T7 in the spindle. This line uses T45. Select option 1, 2 or 3.');
+        fireEvent.click(screen.getByTestId('gg-resume-tool-measure'));
+        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('There is no reference. gSender cannot measure the new tool against it.');
+        expect(screen.queryByTestId('gg-resume-source-old-reference')).toBeNull();
+        expect(startButton()).toBeDisabled();
+        fireEvent.click(screen.getByTestId('gg-resume-source-old-tool'));
+        fireEvent.click(startButton());
+        expect(started()[0].toolMode).toBe('full');
+    });
+
+    it('choice 1 with another tool recorded: says so, and records the line\'s tool as loaded', () => {
+        store.set(LOADED_TOOL_KEY, { tool: '7', since: 1 });
+        renderButton();
+        open();
+        type('N26');
+        fireEvent.click(screen.getByTestId('gg-resume-tool-keep'));
+        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('gSender recorded T7 in the spindle. Make sure that T45 is in the spindle.');
+        expect(screen.getByTestId('gg-resume-preamble')).not.toHaveTextContent('M6');
+        fireEvent.click(startButton());
+        expect(started()[0].toolMode).toBe('keep');
+        expect(getLoadedTool().tool).toBe('45');
+    });
+
+    it('the reference going stale while the dialog is open: a selected choice 2 stops being enough', () => {
         store.set(LOADED_TOOL_KEY, { tool: '7', since: 1 });
         renderButton();
         open();
         type('N26');
         expect(screen.getByTestId('gg-resume-tool-measure')).toBeChecked();
-        expect(screen.getByTestId('gg-resume-preamble')).toHaveTextContent('T45 M6');
-        serverSays('gg:resume:info', { toolReference: false });
-        expect(screen.getByTestId('gg-resume-reference')).toHaveTextContent(/first measures the tool in the spindle/);
-        serverSays('gg:resume:info', { toolReference: true });
-        expect(screen.getByTestId('gg-resume-reference')).toHaveTextContent(/goes directly to the new tool/);
-        fireEvent.click(screen.getByTestId('gg-resume-start'));
-        expect(started()[0].measureTool).toBe(true);
-        expect(started()[0].preamble).toContain('T45 M6');
-    });
-
-    it('can be switched to keep the tool', () => {
-        store.set(LOADED_TOOL_KEY, { tool: null, since: null });
-        renderButton();
-        open();
-        type('N26');
-        expect(screen.getByTestId('gg-resume-tool-measure')).toBeChecked();
-        fireEvent.click(screen.getByTestId('gg-resume-tool-keep'));
-        expect(screen.getByTestId('gg-resume-preamble')).not.toHaveTextContent('M6');
+        expect(startButton()).toBeEnabled();
+        reference(STALE); // the pendant set Z zero just now
+        // nothing was selected by hand: the default moves to 3
+        expect(screen.getByTestId('gg-resume-tool-reference')).toBeChecked();
+        fireEvent.click(screen.getByTestId('gg-resume-tool-measure'));
+        expect(startButton()).toBeDisabled();
     });
 
     it('rapid height, plunge feed and spin-up can be changed', () => {

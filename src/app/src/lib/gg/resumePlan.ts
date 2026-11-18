@@ -14,7 +14,7 @@
  *
  *   G21 G53 G0 Z<safe>        up to the tool change safe height (machine Z, mm)
  *   G21 G90 G94 G17 G54       the program's modes at that line
- *   T45 M6                    only when the tool is to be changed or measured
+ *   T45 M6                    only when a tool is to be fitted or measured
  *   S24000 M3 / G4 P5         spindle as at that line, spin-up wait
  *   M8                        coolant as at that line
  *   G0 X.. Y..                over the start point, at the safe height
@@ -625,7 +625,7 @@ export const planResume = (
     }
     if (wordsOf(text).some((w) => w.letter === 'M' && w.value === 6)) {
         problems.push(
-            'This line is a tool change. Select the first move of the next operation. Then select "Change or measure it first".',
+            'This line is a tool change. Select the first move of the next operation. Then select tool option 2.',
         );
     }
     if (macros) {
@@ -650,7 +650,7 @@ export const planResume = (
         warnings.push('The program does not set the units before this line. Resume From uses millimetres (G21).');
     }
     if (options.measureTool && state.tool === null && state.nextTool === null) {
-        problems.push('The program does not select a tool before this line. There is no tool for the tool change.');
+        warnings.push('The program does not select a tool before this line. The tool change has no tool number.');
     }
 
     // where to come down
@@ -690,8 +690,8 @@ export const planResume = (
     const modes = `${units} G90 ${state.feedMode} ${state.plane} ${state.wcs}`;
     pre.push(modes);
     const tool = state.tool ?? state.nextTool;
-    if (options.measureTool && tool !== null) {
-        pre.push(`T${tool} M6`);
+    if (options.measureTool) {
+        pre.push(tool !== null ? `T${tool} M6` : 'M6');
         // again after the tool change wizard, whatever it leaves set
         pre.push(modes);
     }
@@ -755,12 +755,21 @@ export const planResume = (
     return plan;
 };
 
-/** What the server needs (see src/server/lib/gg/resumeSplice.js). */
-export const resumePayload = (plan: ResumePlan, total: number, measureTool: boolean) => ({
-    seq: plan.seq,
-    text: plan.text,
-    total,
-    preamble: plan.preamble,
-    target: plan.target,
-    measureTool,
-});
+/**
+ * What the server needs (see src/server/lib/gg/resumeSplice.js).
+ * @param toolMode  what the tool change of the entry lines does
+ *                  (lib/gg/resumeToolChoice.ts); 'keep' when there is none
+ */
+export const resumePayload = (plan: ResumePlan, total: number, toolMode: string | boolean) => {
+    // a boolean is the 0.7.0 form: measure or keep
+    const mode = typeof toolMode === 'string' ? toolMode : toolMode ? 'measure' : 'keep';
+    return {
+        seq: plan.seq,
+        text: plan.text,
+        total,
+        preamble: plan.preamble,
+        target: plan.target,
+        toolMode: mode,
+        measureTool: mode !== 'keep',
+    };
+};
