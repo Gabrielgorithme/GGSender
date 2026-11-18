@@ -150,7 +150,7 @@ export const OperationsList = ({ info, seq, feedOverride = 100 }: ListProps) => 
                                                         type="button"
                                                         className="truncate text-left hover:underline"
                                                         onClick={() => requestPickLine(op.firstMotionLine ?? op.line)}
-                                                        title={`${op.name}${op.notes.length ? ` — ${op.notes.join(' / ')}` : ''}\nLine ${op.line + 1}. Click: show its first move in the 3D view.`}
+                                                        title={`${op.name}${op.notes.length ? ` — ${op.notes.join(' / ')}` : ''}\nLine ${op.line + 1}. Click to see its first move in the 3D view.`}
                                                     >
                                                         {op.name}
                                                     </button>

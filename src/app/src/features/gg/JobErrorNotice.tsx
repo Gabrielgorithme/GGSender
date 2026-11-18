@@ -34,13 +34,13 @@ export const jobErrorText = (report: JobErrorReport, content: string) => {
     const n = nWordOf(report.line);
     const where = [n, fileLine ? `file line ${fileLine}` : null].filter(Boolean).join(', ');
     return {
-        title: `Error ${report.code}: the controller refused a line`,
+        title: `Error ${report.code}: the controller did not accept a line`,
         where: where || 'line not known',
         line: report.line,
         message: report.message,
         advice: report.held
-            ? 'The machine is held: the lines gSender had already sent after this one have not run. Stop the job; resuming would run them from the wrong position (after a refused arc, the next move cuts a straight line from where the arc began). Then fix the cause and use Resume From.'
-            : 'The job is paused, but the lines already sent after this one still run on the controller.',
+            ? 'WARNING: Stop the job. Do not resume it. The machine is on hold, and the lines after this line did not run. If you resume, these lines start from an incorrect position and can cut into the part. Correct the cause, then use Resume From.'
+            : 'The job is paused. But the controller runs the lines that it has after this line.',
     };
 };
 

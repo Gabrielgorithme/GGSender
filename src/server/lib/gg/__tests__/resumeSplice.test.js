@@ -25,7 +25,7 @@ describe('GGSender: resume splice', () => {
     });
 
     it('refuses a program or line that is not the one planned, and anything but plain G-code', () => {
-        expect(spliceResume(program(), plan({ text: 'N21 G1 X99' })).error).toMatch(/not the same/);
+        expect(spliceResume(program(), plan({ text: 'N21 G1 X99' })).error).toMatch(/different/);
         expect(spliceResume(program(), plan({ total: 31 })).error).toMatch(/30 lines/);
         expect(spliceResume(program(), plan({ seq: 99 })).error).toMatch(/outside/);
         expect(spliceResume(program(), plan({ preamble: ['$H'] })).error).toMatch(/plain G-code/);
@@ -33,7 +33,7 @@ describe('GGSender: resume splice', () => {
         expect(spliceResume(program(), plan({ preamble: ['G0 X[posx]'] })).error).toMatch(/plain G-code/);
         expect(spliceResume(program(), plan({ preamble: ['G0 X1\nG0 Y1'] })).error).toMatch(/plain G-code/);
         expect(spliceResume(program(), plan({ preamble: [] })).error).toMatch(/plain G-code/);
-        expect(spliceResume(program(), plan({ seq: 2, text: 'N3 G1 X2' })).error).toMatch(/too close/);
+        expect(spliceResume(program(), plan({ seq: 2, text: 'N3 G1 X2' })).error).toMatch(/too near/);
         expect(spliceResume([], plan()).error).toMatch(/No program/);
     });
 

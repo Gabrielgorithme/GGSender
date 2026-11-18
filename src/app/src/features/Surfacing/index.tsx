@@ -284,7 +284,7 @@ const SurfacingTool = () => {
                         <InputArea label="Start Height & Ramp">
                             <div className="grid grid-cols-[3fr_10px_3fr] gap-x-2 gap-y-1 col-span-3">
                                 <Tooltip
-                                    content={`Height above Z0 the tool starts, ramps in from and travels at. Default is ${convertedDefaultSurfacingState.safeHeight} ${units}`}
+                                    content={`The height above Z0 for the start, the ramp-in and the travel moves of the tool. The default is ${convertedDefaultSurfacingState.safeHeight} ${units}.`}
                                 >
                                     <ControlledInput
                                         type="number"
@@ -311,7 +311,7 @@ const SurfacingTool = () => {
                                     &
                                 </span>
                                 <Tooltip
-                                    content={`Ramp-in angle. Default is ${defaultSurfacingState.rampAngle} deg`}
+                                    content={`The ramp-in angle. The default is ${defaultSurfacingState.rampAngle} deg.`}
                                 >
                                     <ControlledInput
                                         type="number"

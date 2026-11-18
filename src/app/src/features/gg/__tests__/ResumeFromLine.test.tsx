@@ -128,9 +128,9 @@ describe('GGSender: Resume From dialog', () => {
         expect(screen.getByTestId('gg-resume-tool-measure')).toBeChecked();
         expect(screen.getByTestId('gg-resume-preamble')).toHaveTextContent('T45 M6');
         serverSays('gg:resume:info', { toolReference: false });
-        expect(screen.getByTestId('gg-resume-reference')).toHaveTextContent(/first measures the tool now in the spindle/);
+        expect(screen.getByTestId('gg-resume-reference')).toHaveTextContent(/first measures the tool in the spindle/);
         serverSays('gg:resume:info', { toolReference: true });
-        expect(screen.getByTestId('gg-resume-reference')).toHaveTextContent(/goes straight to the new tool/);
+        expect(screen.getByTestId('gg-resume-reference')).toHaveTextContent(/goes directly to the new tool/);
         fireEvent.click(screen.getByTestId('gg-resume-start'));
         expect(started()[0].measureTool).toBe(true);
         expect(started()[0].preamble).toContain('T45 M6');
@@ -175,7 +175,7 @@ describe('GGSender: Resume From dialog', () => {
         expect(screen.queryByTestId('gg-resume-stop-far')).toBeNull();
         // a later line is flagged
         type('N27');
-        expect(within(screen.getByTestId('gg-resume-issues')).getByText(/after where the tool stopped/)).toBeInTheDocument();
+        expect(within(screen.getByTestId('gg-resume-issues')).getByText(/after the stop line/)).toBeInTheDocument();
     });
 
     it('a stop position far from every move is called out', () => {
@@ -189,7 +189,7 @@ describe('GGSender: Resume From dialog', () => {
         });
         renderButton();
         open();
-        expect(screen.getByTestId('gg-resume-stop-far')).toHaveTextContent(/may not be where the tool stopped/);
+        expect(screen.getByTestId('gg-resume-stop-far')).toHaveTextContent(/distance is large/);
     });
 
     it('a line it cannot resume from: the reason, and no Resume', () => {

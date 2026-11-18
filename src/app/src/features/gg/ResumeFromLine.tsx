@@ -144,7 +144,7 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
     const resume = () => {
         if (!plan || !plan.ok) return;
         controller.command('gg:resume:start', resumePayload(plan, idx.total, measuring));
-        toast.info(`Resuming at ${plan.nWord ?? `line ${plan.line + 1}`}`, { position: 'bottom-right' });
+        toast.info(`Resume from ${plan.nWord ?? `line ${plan.line + 1}`}`, { position: 'bottom-right' });
         onClose();
     };
 
@@ -211,20 +211,21 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                 </div>
                 {suggestion && (
                     <div className="text-xs text-gray-600 dark:text-gray-300" data-testid="gg-resume-stop-note">
-                        The last run stopped with the tool {fmt(suggestion.distance)} {unit} from{' '}
-                        {nWordOf(idx.lines[suggestion.line]) ?? `line ${suggestion.line + 1}`}: resuming there redoes that move.
-                        gSender had counted {suggestion.record.received} lines; the machine runs behind that count.
+                        The last job stopped with the tool {fmt(suggestion.distance)} {unit} from{' '}
+                        {nWordOf(idx.lines[suggestion.line]) ?? `line ${suggestion.line + 1}`}. A resume at this line does
+                        that move again. The machine is always behind the line count of gSender
+                        ({suggestion.record.received} lines).
                         {suggestion.distance > FAR_FROM_PATH[unit] && (
                             <span className="block font-semibold text-amber-600 dark:text-amber-400" data-testid="gg-resume-stop-far">
-                                That is far from every move near where the job had got to: the recorded position may not be
-                                where the tool stopped (moved after the stop, or position lost). Check the line before resuming.
+                                This distance is large. The machine possibly moved after the stop, or its position is lost.
+                                Make sure that the line is correct before you resume.
                             </span>
                         )}
                     </div>
                 )}
                 {resolved?.error && <div className="text-sm text-red-600">{resolved.error}</div>}
                 {resolved && resolved.matches.length > 1 && (
-                    <div className="text-sm text-amber-600">This N number appears {resolved.matches.length} times; the first is used.</div>
+                    <div className="text-sm text-amber-600">This N number is on {resolved.matches.length} lines. Resume From uses the first line.</div>
                 )}
 
                 {plan && (
@@ -261,26 +262,26 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                             <label className="flex items-start gap-2 text-sm">
                                 <input type="radio" checked={!measuring} onChange={() => setMeasureTool(false)} data-testid="gg-resume-tool-keep" />
                                 <span>
-                                    T{lineTool ?? '?'} is in the spindle, untouched since the job stopped{' '}
+                                    Keep the tool: T{lineTool ?? '?'} is in the spindle and did not change after the stop{' '}
                                     <span className="text-gray-500">
-                                        (recorded as loaded: {loaded ? `T${loaded}` : 'not known'})
+                                        (recorded tool: {loaded ? `T${loaded}` : 'not known'})
                                     </span>
                                 </span>
                             </label>
                             <label className="flex items-start gap-2 text-sm">
                                 <input type="radio" checked={measuring} onChange={() => setMeasureTool(true)} data-testid="gg-resume-tool-measure" />
-                                <span>Change or measure it first (the tool change wizard runs before the spindle starts)</span>
+                                <span>Change or measure it first: the tool change wizard runs before the spindle starts</span>
                             </label>
                             {measuring && (
                                 <div
                                     className={cx('ml-6 text-xs', toolReference === false ? 'text-amber-700 dark:text-amber-400' : 'text-gray-600 dark:text-gray-300')}
                                     data-testid="gg-resume-reference"
                                 >
-                                    {toolReference === null && 'Asking the controller connection for the tool sensor reference…'}
+                                    {toolReference === null && 'gSender asks the server for the tool sensor reference…'}
                                     {toolReference === true &&
-                                        'The tool sensor reference from the earlier tool change of this connection is kept: the wizard goes straight to the new tool, as after a broken bit. This assumes the work Z zero has not been set again since.'}
+                                        'The tool sensor reference from the last tool change stays. The wizard goes directly to the new tool. Use this after a broken bit. This is correct only if nobody set the work Z zero again after the stop.'}
                                     {toolReference === false &&
-                                        'No tool sensor reference since gSender connected: the wizard first measures the tool now in the spindle as the reference. That is right only if the work Z zero was set with that tool, intact. After a broken bit, zero Z on the work with the new tool instead and resume with "untouched".'}
+                                        'There is no tool sensor reference after gSender connected. The wizard first measures the tool in the spindle as the reference. This is correct only if you set the work Z zero with this tool, and the tool is not broken. After a broken bit, set the work Z zero with the new tool. Then select "Keep the tool".'}
                                 </div>
                             )}
                         </Section>
@@ -313,9 +314,10 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                                 <span>s</span>
                             </div>
                             <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {plan.rapidDownFromOperation ? "Rapid height: the operation's highest rapid. " : ''}
-                                {plan.plungeFromOperation ? "Feed: the operation's plunge feed. " : ''}
-                                The column above a point the tool reached is empty, so the way down is clear when resuming at or before where the job stopped.
+                                {plan.rapidDownFromOperation ? 'Rapid height: the highest rapid of the operation. ' : ''}
+                                {plan.plungeFromOperation ? 'Feed: the plunge feed of the operation. ' : ''}
+                                No material is above the start point, because the tool was at that point. This is true only for
+                                lines at or before the stop line.
                             </div>
                         </Section>
 
@@ -334,7 +336,8 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                                 ))}
                                 {beyondStop && (
                                     <li className="text-amber-600 dark:text-amber-400">
-                                        This line is after where the tool stopped: the moves in between are skipped, and the way down may meet uncut material.
+                                        This line is after the stop line. The job does not do the moves between the two lines. The
+                                        tool can touch material when it goes down.
                                     </li>
                                 )}
                                 {plan.warnings.map((w) => (

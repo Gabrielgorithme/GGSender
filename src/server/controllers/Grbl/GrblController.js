@@ -2531,7 +2531,7 @@ class GrblController {
 				const [plan] = args;
 				const activeState = _.get(this.state, "status.activeState", "");
 				if (this.workflow.state !== WORKFLOW_STATE_IDLE || activeState !== GRBL_ACTIVE_STATE_IDLE) {
-					const why = `The machine must be idle with no job running (machine ${activeState}, job ${this.workflow.state}).`;
+					const why = `The machine must be Idle, and no job can run (machine ${activeState}, job ${this.workflow.state}).`;
 					logEvent("resume", `refused: ${why}`);
 					this.emit("gg:resume:error", why);
 					return;

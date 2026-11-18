@@ -489,32 +489,32 @@ export const analyzeProgram = (content: string): PreflightReport => {
     const times = (c: Counter) => (c.count > 1 ? ` (${c.count} lines)` : '');
 
     add('FEED_UNDEFINED', 'error', (c) =>
-        `Feed move before any F word: the controller rejects it (error:22)${times(c)}.`);
+        `A feed move comes before the first F word${times(c)}. The controller does not accept it (error:22).`);
     add('CUT_SPINDLE_OFF', 'warning', (c) =>
-        `Feed move below Z0 with the spindle stopped${times(c)}.`);
+        `A feed move goes below Z0 when the spindle is off${times(c)}.`);
     add('RAPID_BELOW_ZERO', 'warning', (c) =>
-        `Rapid move ending below Z0${times(c)}.`);
+        `A rapid move ends below Z0${times(c)}.`);
     if (toolChanges > 0) {
         add('CUT_BEFORE_M6', 'warning', (c) =>
-            `Cutting starts before the first tool change: these moves use whatever tool is in the spindle${times(c)}.`);
+            `The cut starts before the first tool change${times(c)}. These moves use the tool that is in the spindle.`);
     }
     add('M6_NO_TOOL', 'warning', (c) =>
-        `Tool change without a tool number: gSender cannot tell which tool is meant${times(c)}.`);
+        `A tool change has no tool number${times(c)}. gSender cannot know which tool to use.`);
     add('SAME_TOOL_TWICE', 'info', (c) =>
-        `Tool change to the tool already in use${times(c)}.`);
+        `A tool change selects the tool that is already in use${times(c)}.`);
     add('TOOL_OVER_255', 'info', (c) =>
-        `Tool number above 255${times(c)}. Fine while tool numbers are not sent to the controller.`);
+        `A tool number is above 255${times(c)}. This is not a problem if gSender does not send tool numbers to the controller.`);
     add('G53_IN_PROGRAM', 'info', (c) =>
-        `Move in machine coordinates (G53)${times(c)}: not included in the work extents.`);
+        `A move uses machine coordinates (G53)${times(c)}. The work extents do not include it.`);
     add('G28_G30', 'info', (c) =>
-        `Move to a stored machine position (G28/G30)${times(c)}: not included in the work extents.`);
+        `A move goes to a stored machine position (G28/G30)${times(c)}. The work extents do not include it.`);
     add('G92', 'warning', (c) =>
-        `G92 changes the work offset from within the program${times(c)}.`);
+        `G92 in the program changes the work offset${times(c)}.`);
     if (sawG20 && sawG21) {
         issues.push({
             severity: 'warning',
             code: 'MIXED_UNITS',
-            message: 'The program switches between inches (G20) and millimetres (G21).',
+            message: 'The program uses inches (G20) and millimetres (G21).',
         });
     }
 

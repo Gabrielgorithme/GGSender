@@ -55,10 +55,10 @@ export const spliceResume = (lines, plan = {}) => {
         return { error: `Line index ${plan.seq} is outside the program.` };
     }
     if (Number(plan.total) !== programLength(lines)) {
-        return { error: `The loaded program has ${programLength(lines)} lines, the plan was made for ${plan.total}. Reload the file.` };
+        return { error: `The loaded program has ${programLength(lines)} lines. The plan is for ${plan.total} lines. Load the file again.` };
     }
     if (String(lines[seq]).trim() !== String(plan.text || '').trim()) {
-        return { error: 'The chosen line is not the same in the loaded program. Reload the file.' };
+        return { error: 'The selected line is different in the loaded program. Load the file again.' };
     }
     const preamble = Array.isArray(plan.preamble) ? plan.preamble : [];
     if (preamble.length === 0 || preamble.length > MAX_ENTRY_LINES || !preamble.every(plainLine)) {
@@ -72,7 +72,7 @@ export const spliceResume = (lines, plan = {}) => {
     const firstUntouched = target !== null ? seq + 1 : seq;
     const from = firstUntouched - entry.length;
     if (from < 0) {
-        return { error: 'The line is too close to the start of the program.' };
+        return { error: 'The line is too near the start of the program.' };
     }
     const out = lines.slice();
     entry.forEach((l, k) => {

@@ -59,8 +59,8 @@ export const LoadedToolIndicator = () => {
                 }}
                 title={
                     known
-                        ? `Tool recorded as loaded${when ? `, set ${when}` : ''}. Click to correct.`
-                        : 'Loaded tool unknown. Click to set it.'
+                        ? `The recorded tool in the spindle${when ? ` (set ${when})` : ''}. Click to change it.`
+                        : 'The tool in the spindle is not known. Click to set it.'
                 }
                 className={`px-3 h-8 rounded-md border text-sm font-bold font-mono whitespace-nowrap ${
                     known
@@ -77,7 +77,7 @@ export const LoadedToolIndicator = () => {
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                         {known
                             ? `Recorded as T${loaded.tool}${when ? `, set ${when}` : ''}.`
-                            : 'Not known. The next tool change will run in full.'}
+                            : 'The tool in the spindle is not known.'}
                     </div>
                     <div className="flex flex-row gap-2 items-center">
                         <span className="font-mono font-bold">T</span>

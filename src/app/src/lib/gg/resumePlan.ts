@@ -598,7 +598,7 @@ export const planResume = (
         }
         const e = applyLine(state, raw);
         if (e.offsets) {
-            problems.push(`Line ${i + 1} changes work offsets (G10/G92); resuming after it cannot rebuild that.`);
+            problems.push(`Line ${i + 1} changes the work offsets (G10/G92). Resume From cannot set these offsets again.`);
         }
         if (e.programEnd) {
             problems.push(`The program ends at line ${i + 1} (M2/M30), before this line.`);
@@ -621,36 +621,36 @@ export const planResume = (
     };
 
     if (firstMove < 0) {
-        problems.push('This is at or before the first move of the program: start the job normally.');
+        problems.push('This line is at or before the first move of the program. Start the job with Start.');
     }
     if (wordsOf(text).some((w) => w.letter === 'M' && w.value === 6)) {
         problems.push(
-            'This line is a tool change. Resume from the first move of the operation after it, with "change or measure the tool" ticked.',
+            'This line is a tool change. Select the first move of the next operation. Then select "Change or measure it first".',
         );
     }
     if (macros) {
-        warnings.push('The program has gSender macros or expressions (% $ [ ]) before this line; they are not replayed.');
+        warnings.push('The program has gSender macros or expressions (% $ [ ]) before this line. Resume From does not run them.');
     }
     if (state.usesA || wordsOf(text).some((w) => ['A', 'B', 'C'].includes(w.letter))) {
-        problems.push('Rotary programs (A axis) cannot be resumed this way.');
+        problems.push('Resume From cannot resume rotary programs (A axis).');
     }
     if (state.distance === 'G91') {
-        problems.push('Incremental distance mode (G91) is active at this line; resuming needs absolute coordinates.');
+        problems.push('Incremental distance mode (G91) is on at this line. Resume From needs absolute coordinates (G90).');
     }
     if (state.feedMode !== 'G94') {
-        problems.push(`Feed mode ${state.feedMode} is active at this line; only G94 (units per minute) is supported.`);
+        problems.push(`Feed mode ${state.feedMode} is on at this line. Resume From can use only G94 (units per minute).`);
     }
     if (state.absoluteArcs) {
-        problems.push('The program uses G90.1 (absolute arc centres), which Grbl and FluidNC do not support.');
+        problems.push('The program uses G90.1 (absolute arc centres). Grbl and FluidNC do not accept it.');
     }
     if (state.motion.startsWith('G38') || state.motion === 'G80') {
-        problems.push(`Motion mode ${state.motion} is active at this line.`);
+        problems.push(`Motion mode ${state.motion} is on at this line.`);
     }
     if (!state.unitsSeen) {
-        warnings.push('The program sets no units before this line; millimetres (G21) assumed.');
+        warnings.push('The program does not set the units before this line. Resume From uses millimetres (G21).');
     }
     if (options.measureTool && state.tool === null && state.nextTool === null) {
-        problems.push('No tool is named before this line, so there is no tool to change to.');
+        problems.push('The program does not select a tool before this line. There is no tool for the tool change.');
     }
 
     // where to come down
@@ -671,15 +671,15 @@ export const planResume = (
     plan.plungeFromOperation = !(plungeOption !== undefined && plungeOption !== null && plungeOption > 0) && heights.plunge !== null;
 
     if (start.x === null || start.y === null) {
-        warnings.push('X/Y at this line is not known (it follows a move in machine coordinates or a homing move); the machine stays where it is in X/Y and the line moves it.');
+        warnings.push('X/Y at this line is not known, because a move in machine coordinates or a homing move comes before it. The machine stays at its X/Y position. The line moves it.');
     }
     if (start.z === null) {
-        warnings.push('Z at this line is not known (it follows a move in machine coordinates or a homing move); the machine stays at the safe height and the program brings Z down.');
+        warnings.push('Z at this line is not known, because a move in machine coordinates or a homing move comes before it. The machine stays at the safe height. The program moves Z down.');
     } else if (rapidDownTo === null) {
-        warnings.push('No retract height found in this operation: the whole way down from the safe height is fed.');
+        warnings.push('This operation has no retract height. The machine goes down from the safe height at the plunge feed.');
     }
     if (start.z !== null && plungeFeed === null) {
-        problems.push('No feed known for the way down; enter a plunge feed.');
+        problems.push('The feed for the move down is not known. Enter a plunge feed.');
     }
 
     // the entry lines
@@ -701,7 +701,7 @@ export const planResume = (
     if (state.spindle !== 'M5') {
         pre.push(state.speed !== null ? `S${fmt(state.speed, 'G21')} ${state.spindle}` : state.spindle);
         if (state.speed === null) {
-            warnings.push('The spindle is on at this line but no speed (S) was found before it.');
+            warnings.push('The spindle is on at this line, but the program sets no speed (S) before it.');
         }
         if (options.spinupSeconds > 0) {
             pre.push(`G4 P${fmt(options.spinupSeconds, 'G21')}`);
@@ -741,7 +741,7 @@ export const planResume = (
         }
     }
     if (state.feed === null && state.motion !== 'G0') {
-        warnings.push('No feed (F) was found before this line.');
+        warnings.push('The program sets no feed (F) before this line.');
     }
 
     plan.preamble = pre;
@@ -749,7 +749,7 @@ export const planResume = (
     const firstUntouched = plan.target ? seq + 1 : seq;
     plan.spliceSeq = firstUntouched - count;
     if (plan.spliceSeq < 0) {
-        problems.push('This line is too close to the start of the program to fit the entry moves before it: start the job normally.');
+        problems.push('This line is too near the start of the program. There is not sufficient space for the entry lines before it. Start the job with Start.');
     }
     plan.ok = problems.length === 0;
     return plan;
