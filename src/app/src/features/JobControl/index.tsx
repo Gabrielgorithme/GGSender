@@ -232,7 +232,10 @@ const JobControl: React.FC<JobControlProps> = ({
     return (
         <>
             <SDCardProgress />
-            <div className="z-10 absolute bottom-[30%] portrait:bottom-[calc(50%+85px)] left-1/2 right-1/2 -translate-x-1/2 w-64 justify-center items-center flex">
+            {/* GGSender: flex-col, the hold control sits above the progress text */}
+            <div className="z-10 absolute bottom-[30%] portrait:bottom-[calc(50%+85px)] left-1/2 right-1/2 -translate-x-1/2 w-64 justify-center items-center flex flex-col">
+                {/* GGSender: stop/start the spindle while the job is held */}
+                <HoldSpindleControl />
                 {isConnected && fileLoaded && senderStatus?.sent > 0 && (
                     <ProgressArea
                         senderStatus={senderStatus}
@@ -267,8 +270,6 @@ const JobControl: React.FC<JobControlProps> = ({
                     </div>
                 </div>
 
-                {/* GGSender: stop/start the spindle while the job is held */}
-                <HoldSpindleControl />
 
                 <div className="z-10 absolute top-[-30px] max-xl:top-[-34px] left-1/2 right-1/2 flex flex-row gap-2 justify-center items-center">
                     <ControlButton
