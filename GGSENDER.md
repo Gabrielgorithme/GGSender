@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.7.0**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.7.3**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -51,10 +51,29 @@ node scripts/gg/pack-asar.mjs --stock <official app.asar> --out app.asar
 the files from `dist/gsender` (`main.js`, `preload.js`, `server-cli.js`, `server/index.js` and the
 whole `app/` folder). Everything else, including `node_modules`, is copied through byte for byte.
 
-To get the official `app.asar` without a Windows machine: download `gSender-1.6.4-x64.exe` from the
-official release page. The installer contains a 7-Zip archive; find the `7z` signature
-(`37 7A BC AF 27 1C`) in the file, cut from there to the end, and extract `resources/app.asar`
-with `7za`.
+To get the official `app.asar` without a Windows machine: `scripts/gg/fetch-stock-asar.sh
+<output>` downloads `gSender-1.6.4-x64.exe` from the official release page, cuts the 7-Zip archive
+out of the installer (it starts at the first `7z` signature, `37 7A BC AF 27 1C`), extracts
+`resources/app.asar` and checks the SHA-256 of both files. It needs `7z`, `7zz` or `7za`.
+
+## The repository on GitHub
+
+- `README.md` is the front page for visitors: what the fork adds, with pictures (`examples/gg/`), and
+  how to install it. It replaces upstream's README. Keep it short; the detail is in this file.
+- `examples/gg/demo-plate.nc` is the program in the first pictures: five operations, three tools, made
+  to lie over each other. It was written by a script, not by Fusion, in the form Fusion's post
+  writes.
+- `.github/workflows/gg.yml`: for a pull request into `gg/main`, the tests, the type check, the
+  build and the packaged `app.asar` as an artifact of the run (30 days). On `gg/main`, when the
+  version in `gg-build.json` has no release yet, the same archive is published as release
+  `gg-v<version>` with `app.asar`, its SHA-256, and the notes that `scripts/gg/release-notes.sh`
+  takes from the change log below. So: bump the version, write the change-log entry, merge, and
+  the release appears. The end-to-end scripts are not run there.
+- Upstream's own workflows (`CI.yml`, `auto-merge.yml`, `notify-on-release.yml`) carry
+  `if: github.repository == 'Sienci-Labs/gsender'`: they need Sienci's secrets and branches, and
+  one of them merges and pushes on a timer.
+- The branches `master`, `dev`, `feature/*`, `features/*` came with the fork and are upstream's.
+  `gg/0.x` are the fork's history; everything in them is in `gg/main`.
 
 Install:
 
@@ -110,11 +129,27 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
 - **G2/G3 alone is an error.** Grbl and FluidNC refuse a G2/G3 word with no axis words (`G0`/`G1`
   alone are fine). Fusion writes arcs modally (664 lines of the owner's file continue an arc with
   only X Y I J), so anything that restarts the program on such a line must put the G2/G3 on it.
-- **The tool sensor reference lives in the server's memory.** The fixed-sensor wizard's first
-  change of a job probes the tool in the spindle and keeps its work Z at the sensor in
-  `global.toolchange.TOOL_OFFSET` (`controller.sharedContext`); later changes set the new tool to
-  read the same with `G10 L20 P0 Z`. It is lost on disconnection. The work offset itself is stored
-  in the controller and survives resets.
+- **The tool sensor reference lives in the server's memory.** The fixed-sensor wizard probes the
+  tool in the spindle and keeps its work Z at the sensor in `global.toolchange.TOOL_OFFSET`
+  (`controller.sharedContext`); later changes set the new tool to read the same with
+  `G10 L20 P0 Z`. It is lost on disconnection (the owner's choice). The work offset itself is
+  stored in the controller and survives resets. The number is the height of the sensor above the
+  part's Z zero, so it does not depend on the tool, and it is wrong as soon as Z zero is set again
+  (see 0.7.1). Never decide "is there a reference" from `TOOL_OFFSET` alone: ask
+  `controller.ggProbes` (`lib/gg/probeHistory.js`), which also knows whether Z zero moved.
+- **Upstream decides the tool change wizard by counting.** `Sender.incrementToolChanges()` restarts
+  at every job start, and count 1 means "the first tool, already in the spindle" (the *First tool*
+  setting: full wizard, probe length only, or a prompt). A job that does not start at the top
+  looks the same. Do not set the count to steer the wizard (0.7.0 did): pass what is known in the
+  `gcode:toolChange` context and decide in `lib/gg/toolChangeDecision.ts`.
+- **gSender takes comments out before it writes.** `connection.setWriteFilter` removes `(...)`,
+  so a comment-only line of the feeder (the wizards have several) reaches the controller as an
+  empty line and is answered `ok`. A simulated board must answer empty lines or the feeder stalls.
+- **`react-icons` is mocked to nothing in jest** (`jest.config.js`). A pictogram that a test must
+  find needs its own element (`ReferenceIcon` wraps the icon in a labelled `span`).
+- **`pubsub.publish` is asynchronous.** What the screen must follow at once uses `publishSync`
+  (the reference store `lib/gg/probeStore.ts`, the wizard reloads of `features/gg/toolChangeFlow.ts`).
+  With `publish`, a test's late message lands in the next test.
 - **Upstream does not pause on errors unless told to.** The error handler pauses the job only when
   the server's `preferences.showLineWarnings` is `false` or true; the interface sends it only when
   it is on, so by default it is undefined and the job streams on after an error. 0.7.0's error hold
@@ -152,6 +187,7 @@ Events worth searching for:
 | `homed` | The homed state read from the controller, at each change (0.7.0) |
 | `resume` | A resume from a line: the line, the entry lines, refusals, program restored (0.7.0) |
 | `error-hold` | A job line refused by the controller, and the machine held (0.7.0) |
+| `probe` | The tool sensor reference at each change (valid, stale, none, with the last history entry), each tool change request (count, resumed or not, resume mode, reference state), and the wizard the interface runs (0.7.1) |
 
 Code: `src/server/lib/gg/trafficLog.js` (the file), `src/server/lib/gg/streamDiagnostics.js` (the
 events), hooks in `lib/Connection.js`, `GrblController.js`, `CNCEngine.js`, and
@@ -168,6 +204,15 @@ a simulated board that answers like Grbl: `ok` per line, a status report per `?`
 `ok` for `$G`, `error:38` for a tool number above 255. It checks that a job streams to the end and
 that no T word reaches the board. Extend it when changing anything in the stream path.
 
+For the tool sensor (0.7.1) it has `SensorBoard`: machine Z, a work offset reported as `WCO:` after
+each change and every 10th report, a probe that stops on the sensor at a height that depends on the
+tool length, `G10 L20`, real-time dwells, and `zeroByHand()` for a Z zero that never passes through
+gSender. The tests play the interface: they send the wizards' own G-code, kept in
+`src/server/lib/gg/__fixtures__/wizardLines.js` and checked line for line against the real wizards
+by `src/app/src/wizards/__tests__/gg-wizard-lines.test.tsx`, and decide with the real
+`decideFixedSensor`. `board.zeroPlane()` (work offset less tool length) is where the part's Z zero
+is: the assertions are on that.
+
 ## End-to-end run of the built app
 
 `scripts/gg/e2e/` drives the built interface and server (`dist/gsender`, after
@@ -178,16 +223,247 @@ node scripts/gg/e2e/run-server.js /tmp/gg-e2e-home 8765 &
 node scripts/gg/e2e/fake-fluidnc.js 2323 /tmp/fake.log 25 &
 node scripts/gg/e2e/resume.js /tmp/gg-e2e src/app/src/lib/gg/__tests__/fixtures/fusion-one-of-each.nc
 node scripts/gg/e2e/error.js /tmp/gg-e2e scripts/gg/e2e/xz-arc-without-g18.nc
+FAKE_LOG=/tmp/fake.log node scripts/gg/e2e/toolchange.js /tmp/gg-e2e-tc src/app/src/lib/gg/__tests__/fixtures/fusion-one-of-each.nc
+node scripts/gg/e2e/isolate.js /tmp/gg-e2e-iso          # needs the server only, no board
 ```
+
+`isolate.js` (0.7.2) loads `three-operations.nc` (three operations in three places), clicks the
+operations in the list and compares what the 3D view draws, pixel by pixel (Chromium draws WebGL in
+software): which side of the picture goes, what a click finds, that everything comes back.
+
+`toolchange.js` (0.7.1) uses the *Fixed Tool Sensor* strategy and the fake's second port
+(2324, "the pendant": `tool <length>`, `zero [offset]`, `wco <z>`, `state`, one per line, answered
+with the machine state as JSON). It plays the broken-bit case through the real windows and prints
+PASS/FAIL per check, from the fake's own state. `FIRST_TOOL` picks upstream's *First tool* setting,
+`CHOICE=1` resumes keeping the tool. `NOREF=1` (0.7.3) resumes with no job run before, so with no
+reference, as after a lost connection: choice 1 measures the tool first; `NOREF=skip` selects *Do
+not measure*. Start the server with a fresh home folder for each run.
 
 The scripts set the interface's stored settings (`localStorage` key `sienci`: Ethernet to
 127.0.0.1:2323, tool change strategy *Ignore*, no pre-flight pop-up), connect, load the file, run,
 and leave screenshots in the output folder; the fake board logs every line, realtime byte and
 executed move as JSON lines. The fake answers `ok` once a move is queued (planner of 16), runs
 moves one by one, holds on `!`, synchronises on `G4`, tracks overrides and the spindle, and refuses
-an I/K arc in G17 with `error:33`. It is a stand-in for what the fork depends on, not FluidNC.
+an I/K arc in G17 with `error:33`. Since 0.7.1 its positions are machine coordinates, it reports
+`WCO:` as FluidNC does, applies `G10 L20 P0 Z`, ends a `G38.2` on a tool sensor, dwells `G4` in real
+time and answers empty lines. It is a stand-in for what the fork depends on, not FluidNC.
 
 ## Change log
+
+### 0.7.3 (on gSender 1.6.4)
+
+**Resume From, option 1 with no reference: the tool is measured first.** Seen on the machine with
+0.7.2 after a lost USB link: gSender connects again, so it has no reference (it is not kept across
+a connection). The tool and Z zero are the same, so option 1 is the true statement, but option 1
+measured nothing and the job went on with no reference. The action the owner wanted was that of
+option 3, whose statement ("I set Z zero again by hand") was false. Why the reference matters
+there: without one, a tool that breaks cannot be replaced by measurement, and Z zero must be set by
+hand.
+
+- Option 1 now has a second answer when the reference is not correct (none, or Z zero seen to
+  change): **Measure T.. first** (the default: gSender measures the tool on the sensor before the
+  job continues, it becomes the reference, Z zero is not written) or **Do not measure** (0.7.2
+  behaviour: the job continues at once, and the next tool change measures the tool in the spindle
+  first, then asks for the new one). With a correct reference option 1 asks nothing and measures
+  nothing, as before.
+- New resume tool mode `reference-same` (`resumeSplice.js` `TOOL_MODES`, `ResumeToolMode`): the
+  wizard is the same as for option 3 (`reference`: only measure, no `G10`); the tool change window
+  gives its own reason (*You selected this: the same tool is in the spindle, and Z zero did not
+  change.*), never "You set Z zero with this tool".
+- What 0.7.2 did with option 1 and no reference was not wrong for the part: the simulated board
+  and the end-to-end run show the next tool change measuring the old tool first and Z zero staying
+  where it was. It only left the job without a reference until then.
+
+**The line selected in the 3D view is offered in Resume From.** A button *Selected line (N..)* next
+to *Where it stopped* puts that line in the field. The dialog still opens on the stop point when
+there is one; with no stop point it opens on the selected line. (With 0.7.2: click the operation to
+see it alone, click the move, then *Resume From*, *Selected line*.)
+
+Tests added: the choice logic (option 1 in the three states, the default, *Do not measure*); the
+decision and the window text for the new mode; the server (the mode needs the tool change line, is
+handed once); the dialog (default, both answers, a correct reference, a stale one, the answer
+forgotten on reopening, the tool recorded, the selected line with and without a stop point, a line
+of another file). Simulated-board runs of the real controller: no reference, option 1 with the
+measurement (reference valid, no `G10`, offset untouched, the next tool measured against it, Z
+zero where it was) and without it (the next tool change decides "full", Z zero where it was).
+
+The built app was driven against the fake FluidNC: `NOREF=1` 23 checks passed, `NOREF=skip` 11,
+and the two scenarios of 0.7.1 again (24 and 19), and `isolate.js` (18).
+
+Not checked: nothing run on Windows or on the machine. The lost-connection case was played by
+connecting and resuming with no job run before, not by cutting a link mid-job.
+
+### 0.7.2 (on gSender 1.6.4)
+
+**A click on an operation shows only its toolpath.** Asked by the owner: in a file with many
+operations the toolpaths lie over each other, and the move to click cannot be found. A click on an
+operation in the operations list now hides every other toolpath in the 3D view. A click on the
+toolpath then finds only a move of that operation, and the *Previous move* and *Next move* buttons
+of the line card stop at its first and last move. The list shows *The 3D view shows only <name>.*
+with a *Show all* button, also when the list is closed, and the operation has a pink frame. A
+second click on the operation, *Show all*, a click on another operation (which shows that one), a
+line asked for by number that is not in the operation (line card, editor), or another file end it. So
+does turning off the operations list or the setting: nothing stays hidden without a note that says
+so.
+
+- What is shown: the moves of the file lines from the operation's name to the name of the next
+  operation (the last one: to the end of the file). The move that brings the tool to the first
+  position of the operation is part of it; so is its tool change line, which draws nothing.
+- Setting **Click an operation to show only its toolpath** (Config, GGSender; on by default). Off:
+  the click selects the first move of the operation, as before. An operation without a move (notes
+  only) always behaves that way.
+- It only changes what is drawn. Nothing is sent to the controller, the program is not changed, and
+  a job that runs is not affected. It can be used while a job runs: the colours (planned, done)
+  keep following the job, and upstream's *hide processed lines* still hides what was run.
+- How: `ToolpathPicker` hides the line that upstream draws (`workpiece.visible = false`) and adds a
+  second `THREE.Line` beside it that uses the same position and colour buffers with its own draw
+  range (`vertexRangeForLineSpan` in `lib/gg/toolpathPick.ts`). No edit in upstream's
+  `GCodeVisualizer`. At every frame the second line takes the draw range of the hidden one into
+  account (that is how upstream hides processed lines). The second line is added after the
+  toolpath because upstream takes `group.children[0]` for the toolpath. Its geometry gives the
+  shared buffers back before it is disposed, or the dispose would free the toolpath's buffers.
+- Messages: `gg:isolate:request` and `gg:isolate:changed` in `features/gg/pickTopics.ts`.
+
+Tests added: the vertex range of a run of lines (ends on comments and blank lines, ranges that join,
+nothing drawn, bad input); the screen search limited to a part of the vertices; the line span of an
+operation; the picker (same buffers and material, toolpath still the first child, replace, show all,
+clicks and steps limited to the operation, a line outside ends it, upstream's draw range followed, a
+new file, dispose); the list (request sent, note, second click, *Show all*, another operation, list
+closed, the 3D view ending it by itself, the list or the setting turned off, operation without a
+move).
+
+The built app was driven in Chromium (`scripts/gg/e2e/isolate.js`, 18 checks passed): each of
+three operations alone removes the other two from the picture and nothing else, a click where a
+hidden operation runs selects nothing, a click on the shown one selects one of its lines, the steps
+stop in the operation, and after the second click, *Show all* and a new file the picture is the
+same as before to the pixel. A job was also run against the fake board with one operation shown
+alone, with and without *hide processed lines*: no error, the colours followed the job, and the
+processed part was hidden.
+
+Not checked: nothing run on Windows or on the machine. Chromium drew with software WebGL, not with
+the graphics card of the owner's PC. Not tried: rotary files, laser files, the lightweight mode
+(there the toolpath has no line data and the click does nothing), a file of the size the owner
+runs (131 000 lines; the click does one binary search and no copy of the buffers, so no slowdown
+is expected, but it was not measured in the app).
+
+Also seen, not changed: in that short job the list said *all done* while the fake board was still
+cutting. The list follows the lines the controller acknowledged, which run ahead of the cut by
+what the planner holds (16 lines there, a few lines on a long file).
+
+### 0.7.1 (on gSender 1.6.4)
+
+**The tool sensor reference is tracked, shown, and followed.** What went wrong on the machine with
+0.7.0: a bit broke, the owner set Z zero again by hand with the new bit, and *Resume From* offered
+"untouched" (the new bit is never measured, so the next tool change is wrong) or "change or measure
+it first" (the new bit is set against the old reference, which writes the old Z zero over the one
+just set). Neither described what had happened.
+
+How the reference works, which is what makes the rest follow: with S the height at which the sensor
+triggers and P the height of the part's Z zero, a correctly zeroed tool of length L reads
+(S + L) - (P + L) = S - P on the sensor. The length drops out. The reference is *the height of the
+sensor above the part's Z zero*; any correctly zeroed tool gives the same number, and a new tool is
+set by making it read that number (`G10 L20 P0 Z[TOOL_OFFSET]`). So it stays correct exactly as long
+as Z zero is where it was, and setting Z zero again makes it wrong without anything showing it.
+
+- **Tracking** (`server/lib/gg/probeHistory.js`, hooks in `GrblController.js`). FluidNC reports its
+  work offset (`WCO:`) after every change and every 10 to 30 reports; gSender asks 4 times a second,
+  so a Z zero set anywhere, the pendant included, is seen within about a second while connected.
+  The state is a comparison, not a count of events: **valid** when the work Z offset is the one the
+  reference goes with (as probed, or as the wizard's own `G10` for the last tool left it), **stale**
+  when it is another, **none** when no tool was probed since gSender connected. Putting the old
+  offset back makes it valid again. The wizard's own `G10` is told apart because it passes through
+  the feeder just before the offset changes. A history (30 entries) keeps: reference probed (tool,
+  and how far Z zero is from where the reference before had it), tool measured against it, Z zero
+  changed, work coordinate system changed, offset changed by the program. Event `gg:probe:state`,
+  commands `gg:probe:query`, `gg:probe:loaded` (the recorded tool, for the names), `gg:probe:wizard`.
+  It only observes; it sends nothing to the controller.
+- **At a glance** (`features/gg/LoadedToolIndicator.tsx`, `ReferenceStatus.tsx`). The `T45` chip in
+  the top bar carries a pictogram while connected: green tick (correct), amber triangle (Z zero
+  changed after the last probe), grey barred circle (no reference). Click: which tool was probed and
+  when, what a tool change will do with it, and the history, newest first.
+- **At a tool change** (`lib/gg/toolChangeDecision.ts`, `features/gg/toolChangeFlow.ts`,
+  `ToolChangeReason.tsx`; setting *Tool change follows the tool sensor reference*,
+  `workspace.gg.referenceGuard`, default on). The server adds the reference and the resume state to
+  the `gcode:toolChange` context; the interface decides, and the tool change window says what it
+  will do, why, and what happens to Z zero, with a button for the other way until the first step
+  has run. The window follows the reference while it is open: before the first step has run, a
+  change of Z zero makes it decide again; after that it warns if the probe still to come would
+  write an older Z zero over the new one.
+
+  | Situation | Wizard | Button |
+  | --- | --- | --- |
+  | First M6 of a job started from the top | upstream's *First tool* setting | none |
+  | Reference valid | new tool against the reference | *Measure the tool in the spindle first* |
+  | Z zero changed after the last probe | tool in the spindle first (new reference), then the new tool | *Use the old reference* (the window then says that Z zero goes back) |
+  | No reference | tool in the spindle first, then the new tool | none |
+
+  Off: a tool change after the first uses the reference by count, as upstream.
+- **A resumed job never uses the "first tool" shortcut**, with the setting on or off. A job started
+  by *Resume From* is marked on the server until it stops; its tool changes follow the table from
+  the second row. Before, with *First tool* at "probe length only" (or the prompt answered that
+  way), the first M6 after a resume measured the old tool and carried on without asking for the new
+  one. 0.7.0's trick of starting the change count at 1 is gone.
+- **Resume From: three choices** (`features/gg/ResumeFromLine.tsx`, `lib/gg/resumeToolChoice.ts`),
+  under a line that shows the reference:
+  1. *Same tool. Z zero did not change.* Nothing is measured.
+  2. *New or refitted tool. Z zero did not change.* The tool is measured against the reference.
+     Without a valid reference this needs a second answer: the old tool is still in the spindle and
+     not broken (it is measured first), or use the old reference (with the warning that Z zero goes
+     back and the new one is lost).
+  3. *I set Z zero again by hand, with this tool in the spindle.* The tool is measured as the new
+     reference; nothing writes the work offset.
+
+  Default: 3 when Z zero changed after the last probe; 2 when another tool is recorded and the
+  reference is valid; nothing selected (Resume waits) when another tool is recorded and there is no
+  valid reference; otherwise 1. The server refuses a plan whose tool mode and entry lines disagree.
+  Choice 1 records the line's tool as loaded. A program that selects no tool can use 2 and 3 too
+  (a bare `M6`).
+- Words: `lib/gg/referenceText.ts`, one place for the chip, the dialog and the window, in
+  ASD-STE100 style; a test holds every sentence it can produce to 25 words.
+
+**Feed override slider down to 10%** (setting *Feed override minimum*, `workspace.gg.feedOverrideMin`,
+10 or 20 for upstream). The owner asked for 0%: not possible, FluidNC refuses a feed override below
+10% (`FeedOverride::Min = 10` in its `Config.h`, compiled in, not a `config.yaml` setting). Pause
+(the 0.6.0 immediate feed hold) is the way to stop the feed.
+
+**User-facing text in ASD-STE100 style.** The text the fork added (settings descriptions, pre-flight
+and resume messages, notices, tooltips, the hold control's labels) in short sentences, active voice,
+one statement each, warnings as a command first. Upstream's own text is unchanged, the tool change
+window's step descriptions included.
+
+Tests added: the tracker against a small model of the machine (the signs, a pendant zero, the
+wizard's `G10`, a tool of the same length, a coordinate system change in either order of arrival,
+the offset put back, inches, a controller without `WCO`); the resume session's tool modes; the
+decision table, the resume choices and defaults, every text; the banner and its overrule inside the
+real wizard window with the real upstream wizards; the dialog; the chip; the saga. Simulated-board
+runs of the real controller with the wizards' real G-code: a two-tool job (the `G10` carries the
+reference, the part's Z zero does not move); a pendant zero seen within a second; the owner's case
+(broken bit, Z zero by hand 0.12 mm higher, choice 3: nothing writes the offset, the reference
+changes by 0.12, and the program's next tool cuts at the hand-set Z zero); what 0.7.0 did in that
+case, shown for what it is; a resume keeping the tool followed by the program's M6 (count 1, marked
+resumed, never "first tool"; stale after a pendant zero, the default wizard keeps the pendant's Z
+zero); a normal start after a resumed job.
+
+The built app was driven end to end against the fake FluidNC (`scripts/gg/e2e/toolchange.js`, 24
+checks passed, *First tool* = prompt as on the owner's machine): the same broken-bit case through
+the real windows, the chip turning to the warning within 2 s of the pendant zero, choice 3 selected
+by default, the hand-set Z zero unchanged after the resume and after the next tool, exactly one
+`G10` after the resume, the Run button in view, the open window deciding again after a pendant
+zero, the overrule and the way back. A second run (`CHOICE=1`, *First tool* = "Always probe length
+only", 19 checks passed) resumed keeping the tool: the next M6 asked for the new tool, with no
+first-tool prompt. That run also found that the fake board must answer empty lines (see Traps).
+
+Not checked: nothing run on Windows or on the machine; the end-to-end run used a simulated
+controller, not FluidNC. That FluidNC reports `WCO:` right after a pendant zero comes from its
+source (`gc_wco_changed`), not from the owner's firmware version: check 3 of the list below shows it
+in ten seconds. A change of Z zero while gSender is disconnected is not seen (the reference is
+dropped on reconnection, so nothing stale survives it). A Z zero set again to exactly the same value
+is not a change. The reference is read from the last status report after a 0.3 s dwell, as
+upstream does; that timing was not changed and not measured on the machine. Programs that set
+`G43.1` or run in another coordinate system than the active one show the reference as not correct
+between a stop and the resume (the soft reset clears them); the tool change decides again once the
+program's modes are back. The texts were held to sentence length and written to the STE rules by
+hand; no STE checker was run.
 
 ### 0.7.0 (on gSender 1.6.4)
 
@@ -663,6 +939,85 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
+## To check on the machine after installing 0.7.3
+
+Air cuts, hand near the e-stop. Checks 2 and 3 move Z to the tool sensor.
+
+1. Title bar shows `GGSender 0.7.3 (gSender 1.6.4)`.
+2. Connect (the `T` chip shows the grey barred circle: no reference). Load a file, *Resume From*, a
+   line some moves into an operation whose tool is in the spindle. Option 1 is selected, and below
+   it *Measure T.. first* is selected. *Sent before the line* has the `M6` line. Resume: the tool
+   change window says *gSender measures T.. as the reference* and *You selected this: the same tool
+   is in the spindle, and Z zero did not change.* It has no *Install New Tool* step. After the
+   probe the chip is green, Z zero is where it was, and the job continues.
+3. The same, with *Do not measure*: no `M6` line, the job continues at once. At the next tool
+   change the window says *gSender first measures the tool in the spindle as the new reference.
+   Then you fit T..*. Change the tool only after that first probe.
+4. With a green chip (a tool was probed), *Resume From* option 1 shows no second question.
+5. Click a move in the 3D view, then *Resume From*: the button *Selected line (N..)* is there and
+   puts that line in the field. The dialog still opens on *Where it stopped*.
+
+## To check on the machine after installing 0.7.2
+
+Nothing here moves the machine. It can be checked with no machine connected.
+
+1. Title bar shows `GGSender 0.7.2 (gSender 1.6.4)`.
+2. Load a file with several operations. In the operations list (top left of the 3D view) click an
+   operation. Only its toolpath stays in the 3D view. The list shows *The 3D view shows only
+   <name>.* and *Show all*, and the operation has a pink frame.
+3. Click a move of that toolpath: the line card shows a line of that operation. Click where another
+   operation was: nothing is selected. *Previous move* and *Next move* stop at the first and last
+   move of the operation.
+4. Click another operation: that one is shown alone. Click it again: all toolpaths are back. Do the
+   same with *Show all*.
+5. Close the list (click its title) while an operation is shown alone: the note and *Show all*
+   stay.
+6. With the 131 000-line file: the click must answer at once, and rotating the view must be as
+   smooth as before. If it is slow, say so.
+7. During a job (air cut): show the running operation alone. The colours must keep following the
+   cut. *Show all* brings the rest back.
+8. Config, GGSender, *Click an operation to show only its toolpath* off: the click selects the first
+   move of the operation, as in 0.7.1.
+
+## To check on the machine after installing 0.7.1
+
+Air cuts (Z zero set well above the work, or no stock), hand near the e-stop. Checks 3 to 8 move Z
+on the strength of the reference: read the tool change window before each Run.
+
+1. Title bar shows `GGSender 0.7.1 (gSender 1.6.4)`.
+2. Connect. The `T` chip in the top bar has a grey barred circle: no reference. Click it: *No
+   reference. gSender did not probe a tool after it connected.*
+3. Run a job to its first tool change and through it. The chip shows a green tick; the panel names
+   the tool and the time. Now set Z zero **from the FluidDial**: within about two seconds the chip
+   shows the amber triangle and the panel says *Z zero changed at ..., after the last probe*. (If it
+   does not, FluidNC is not reporting the offset change: stop here and send the traffic log.) Set
+   Z zero back to the same value: green again.
+4. The same with gSender's own *Zero* button on Z, and with a touch plate if you use one: amber.
+5. The broken-bit case. Stop a job in the middle of an operation. Fit another bit, set Z zero by
+   hand with it. *Resume From*: the reference line is amber and choice 3 is selected. Resume: the
+   window says *gSender measures T.. as the new reference* and *Z zero does not change*; it probes,
+   it does not ask to fit a tool. Before and after, the Z work coordinate of a fixed point (for
+   example the tool tip on the stock) is the same. Chip: green, and the history says how far the new
+   Z zero is from the old reference.
+6. Let that job run to its next tool change: the window says *gSender measures T.. against the
+   reference (T.., time)*, asks for the new tool, and has the button *Measure the tool in the
+   spindle first*. Press it, read the window, press the button to go back, then Run. After the
+   change, touch the new tool on the stock: Z reads what the hand-set zero gives.
+7. *First tool* (Settings, Tool Changing) at *Prompt for first tool* or *Always probe length only*.
+   Stop a job, *Resume From* with choice 1, let it reach the next tool change: no first-tool prompt,
+   the window asks to fit the new tool.
+8. At a tool change of a job (not the first), with the window open and before pressing Run, set
+   Z zero from the pendant: within about two seconds the window turns amber by itself and says
+   *gSender first measures the tool in the spindle as the new reference*, with the button *Use the
+   old reference*; pressing it shows *Z zero goes back to ...*. Go back to the default, then Stop.
+9. Reconnect: the chip is grey again. *Resume From* with another tool recorded than the line's:
+   nothing is selected, Resume is off until you choose; choice 2 asks whether the old tool is in
+   the spindle.
+10. Feed override: the slider and `-` go down to 10%.
+11. Settings, *Tool change follows the tool sensor reference* off: a later tool change of a job
+    started from the top uses the reference whatever happened to Z zero (upstream); the window still
+    says what it does.
+
 ## To check on the machine after installing 0.7.0
 
 Air cut first for the resume (Z zero set well above the work, or no stock), hand near the e-stop.
@@ -815,9 +1170,21 @@ Do these with the spindle off or as an air cut first.
   operation's first move, with the tool change; left here until the owner has used it.)
 - Editable tool-change sequences (text templates instead of code).
 - Air-cut mode (temporary Z offset).
-- Publish each build as a release with `app.asar` attached; optional Windows installer built by CI.
-- Operations list: highlight an operation's whole toolpath in the 3D view on hover; start the job
-  from a chosen operation (needs the modal-state rebuild above).
+- A Windows installer built by CI. (Each version is published as a release with `app.asar` since
+  0.7.3, see *The repository on GitHub*.)
+- Operations list: start the job from a chosen operation (needs the modal-state rebuild above).
+  (0.7.2 shows one operation alone on a click.) Ideas, not asked for: a click on the tool row to
+  show all operations of that tool; move the camera to the operation shown.
+- A link watchdog: no byte from the controller for a few seconds while gSender asks for status
+  (the stall detector of 0.2.0 only fires when the machine reports Idle, and the traffic log does
+  not record the port closing). Offered to the owner after a USB link that went mute mid-job
+  (19 Nov); not asked for yet.
+
+- Ask the owner whether the machine checklists in this file should be rewritten in ASD-STE100 too
+  (the user-facing text was; these notes were not).
+- A feed override "0%" that holds the job (the firmware's minimum is 10%): an idea, not asked for.
+- Keep the tool sensor reference across a reconnection: the owner chose not to. With the work
+  offset it goes with stored beside it, it could be offered again when the offset still matches.
 
 ## Open problem
 

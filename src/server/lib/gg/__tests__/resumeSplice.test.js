@@ -1,5 +1,5 @@
 // GGSender: resume from a line, server half (lib/gg/resumeSplice.js)
-import { ResumeSession, hasToolReference, spliceResume } from '../resumeSplice';
+import { ResumeSession, hasToolReference, toolModeOf, spliceResume } from '../resumeSplice';
 
 const program = () => [...Array.from({ length: 30 }, (_, i) => `N${i + 1} G1 X${i}`), '%wait ; Wait for the planner to empty'];
 const PRE = ['(resume)', 'G21 G53 G0 Z-0.1', 'G21 G90 G94 G17 G54', 'G0 X1 Y1', 'G1 Z-1 F100'];
@@ -25,7 +25,7 @@ describe('GGSender: resume splice', () => {
     });
 
     it('refuses a program or line that is not the one planned, and anything but plain G-code', () => {
-        expect(spliceResume(program(), plan({ text: 'N21 G1 X99' })).error).toMatch(/not the same/);
+        expect(spliceResume(program(), plan({ text: 'N21 G1 X99' })).error).toMatch(/different/);
         expect(spliceResume(program(), plan({ total: 31 })).error).toMatch(/30 lines/);
         expect(spliceResume(program(), plan({ seq: 99 })).error).toMatch(/outside/);
         expect(spliceResume(program(), plan({ preamble: ['$H'] })).error).toMatch(/plain G-code/);
@@ -33,7 +33,7 @@ describe('GGSender: resume splice', () => {
         expect(spliceResume(program(), plan({ preamble: ['G0 X[posx]'] })).error).toMatch(/plain G-code/);
         expect(spliceResume(program(), plan({ preamble: ['G0 X1\nG0 Y1'] })).error).toMatch(/plain G-code/);
         expect(spliceResume(program(), plan({ preamble: [] })).error).toMatch(/plain G-code/);
-        expect(spliceResume(program(), plan({ seq: 2, text: 'N3 G1 X2' })).error).toMatch(/too close/);
+        expect(spliceResume(program(), plan({ seq: 2, text: 'N3 G1 X2' })).error).toMatch(/too near/);
         expect(spliceResume([], plan()).error).toMatch(/No program/);
     });
 
@@ -76,16 +76,78 @@ describe('GGSender: resume session', () => {
         expect(sender.state.lines).toBe(original);
     });
 
-    it('measuring the tool with a reference: the change count starts at 1', () => {
+    const withChange = (toolMode) => {
+        const base = plan();
+        return { ...base, toolMode, preamble: [...base.preamble.slice(0, 2), 'T5 M6', ...base.preamble.slice(2)] };
+    };
+
+    it('never touches the change count: a resumed job has no "first tool"', () => {
+        ['measure', 'full', 'reference', 'reference-same'].forEach((mode) => {
+            const sender = fakeSender();
+            const s = new ResumeSession();
+            expect(s.prepare(sender, withChange(mode)).error).toBeUndefined();
+            s.begin(sender, s.take());
+            expect(sender.state.toolChanges).toBe(0);
+        });
+    });
+
+    it('"reference-same" (same tool, measured as the reference) needs the tool change line like the other measurements', () => {
         const sender = fakeSender();
         const s = new ResumeSession();
-        s.prepare(sender, plan({ measureTool: true }), { toolReference: true });
+        expect(s.prepare(sender, { ...plan(), toolMode: 'reference-same' }).error).toMatch(/no tool change/);
+        expect(s.prepare(sender, withChange('reference-same')).error).toBeUndefined();
         s.begin(sender, s.take());
-        expect(sender.state.toolChanges).toBe(1);
-        const other = fakeSender();
-        s.prepare(other, plan({ measureTool: true }), { toolReference: false });
-        s.begin(other, s.take());
-        expect(other.state.toolChanges).toBe(0);
+        expect(s.takeToolMode()).toEqual({ resumed: true, mode: 'reference-same' });
+        expect(s.takeToolMode()).toEqual({ resumed: true, mode: null });
+    });
+
+    it('hands the tool mode to the first tool change only, and marks the job as resumed until it stops', () => {
+        const sender = fakeSender();
+        const s = new ResumeSession();
+        // not resumed: a job started the normal way
+        expect(s.takeToolMode()).toEqual({ resumed: false, mode: null });
+        s.prepare(sender, withChange('reference'));
+        // prepared but not started: still not a resumed job
+        expect(s.takeToolMode()).toEqual({ resumed: false, mode: null });
+        s.begin(sender, s.take());
+        expect(s.takeToolMode()).toEqual({ resumed: true, mode: 'reference' });
+        // the next tool change of the same job: resumed, nothing asked
+        expect(s.takeToolMode()).toEqual({ resumed: true, mode: null });
+        s.restore(sender); // the job stopped
+        expect(s.takeToolMode()).toEqual({ resumed: false, mode: null });
+    });
+
+    it('keeping the tool: resumed, and no mode for the next tool change of the program', () => {
+        const sender = fakeSender();
+        const s = new ResumeSession();
+        s.prepare(sender, { ...plan(), toolMode: 'keep' });
+        s.begin(sender, s.take());
+        expect(s.takeToolMode()).toEqual({ resumed: true, mode: null });
+    });
+
+    it('a plan from before 0.7.1 (measureTool only) is read as measure or keep', () => {
+        expect(toolModeOf({ measureTool: true })).toBe('measure');
+        expect(toolModeOf({ measureTool: false })).toBe('keep');
+        expect(toolModeOf({})).toBe('keep');
+        expect(toolModeOf({ toolMode: 'full', measureTool: false })).toBe('full');
+        expect(toolModeOf({ toolMode: 'nonsense', measureTool: true })).toBe('measure');
+    });
+
+    it('refuses a plan whose tool mode and entry lines disagree', () => {
+        const s = new ResumeSession();
+        const a = fakeSender();
+        const original = a.state.lines;
+        // says "reference" but has no tool change: nothing would be measured
+        expect(s.prepare(a, { ...plan(), toolMode: 'reference' }).error).toMatch(/no tool change/);
+        expect(a.state.lines).toBe(original);
+        // says "keep" but has a tool change
+        expect(s.prepare(a, withChange('keep')).error).toMatch(/keeps the tool/);
+        expect(a.state.lines).toBe(original);
+        expect(s.take()).toBeNull();
+        // an M6 inside a comment is not a tool change
+        const base = plan();
+        const commented = { ...base, toolMode: 'keep', preamble: ['(resume at "M6 thread")', ...base.preamble.slice(1)] };
+        expect(s.prepare(a, commented).error).toBeUndefined();
     });
 
     it('a program loaded in between is never replaced by the old one', () => {

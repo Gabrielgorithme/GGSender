@@ -233,7 +233,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         options: ['1', '2', '5', '10'],
                         defaultValue: '1',
                         description:
-                            'GGSender: size of one step of the spindle override slider and its +/- buttons, in percent. The firmware accepts 1% steps; upstream gSender only offers 10 (choose 10 for the upstream behaviour). Takes effect immediately.',
+                            'GGSender: the step of the spindle override slider and its +/- buttons, in percent. The firmware accepts 1% steps. Upstream gSender uses 10.',
                     },
                     {
                         label: 'Feed override step',
@@ -242,7 +242,16 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         options: ['1', '2', '5', '10'],
                         defaultValue: '1',
                         description:
-                            'GGSender: size of one step of the feed override slider and its +/- buttons, in percent.',
+                            'GGSender: the step of the feed override slider and its +/- buttons, in percent.',
+                    },
+                    {
+                        label: 'Feed override minimum',
+                        key: 'workspace.gg.feedOverrideMin',
+                        type: 'select',
+                        options: ['10', '20'],
+                        defaultValue: '10',
+                        description:
+                            'GGSender: the lowest value of the feed override slider, in percent. FluidNC does not accept a value below 10%. To stop the feed, use Pause. Upstream gSender uses 20.',
                     },
                     {
                         label: 'Pause button',
@@ -254,7 +263,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         ],
                         defaultValue: 'Immediate feed hold',
                         description:
-                            'GGSender: "Immediate feed hold" stops the machine at once, like a pendant\'s hold button, and keeps everything where it is. While held, a Stop spindle / Start spindle button shows above the job controls. The Program Pause and Resume events are not run in this mode (G-code cannot run during a hold). "Upstream" is gSender\'s pause: it stops sending the program and runs the Program Pause event after the moves already sent to the controller, so the machine stops a little later.',
+                            'GGSender: Immediate feed hold: the machine stops at once, as with the hold button of a pendant. During the hold, a Stop spindle / Start spindle button shows above the job controls. The Program Pause and Program Resume events do not run in this mode, because G-code cannot run during a hold. Upstream: gSender stops the program, and the Program Pause event runs after the moves that the controller has. The machine stops later.',
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
@@ -263,7 +272,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'boolean',
                         defaultValue: false,
                         description:
-                            'GGSender, with "Immediate feed hold": stop the spindle as soon as the machine is held. Resume starts it again and waits the spin-up time before moving.',
+                            'GGSender, with Immediate feed hold: the spindle stops when the machine is on hold. Resume starts the spindle and waits for the spin-up time. Then the machine moves.',
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
@@ -273,7 +282,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         unit: 's',
                         defaultValue: 5,
                         description:
-                            'GGSender, with "Immediate feed hold": when the spindle was stopped during the hold, Resume starts it, waits this long with the machine still held, then continues the job. Set it to at least the time your spindle takes to reach speed. A cycle start from a pendant does not use it; FluidNC then waits only its own spinup_ms.',
+                            'GGSender, with Immediate feed hold: if the spindle stopped during the hold, Resume starts the spindle. Then it waits for this time before the machine moves. Set a time that is equal to or more than the spin-up time of your spindle. A cycle start from a pendant does not use this setting. FluidNC then waits only for its spinup_ms.',
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
@@ -282,7 +291,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'boolean',
                         defaultValue: true,
                         description:
-                            'GGSender: when the controller refuses a line of a running job (error:N), the machine gets a feed hold at once and a message shows the exact line. Upstream only stops sending, and the lines already sent after the refused one still run: after a refused arc the next move starts from the wrong place. Stop the job after such an error; resuming runs those lines. Off: upstream behaviour.',
+                            'GGSender: if the controller does not accept a line of a job (error:N), the machine stops at once with a feed hold. A message shows the line. Stop the job. If you resume the job, the controller runs the lines that it has after the incorrect line. These moves start from an incorrect position. Off: upstream gSender, which does not stop the machine.',
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
@@ -291,7 +300,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'boolean',
                         defaultValue: true,
                         description:
-                            'GGSender: when the job reaches the next operation of the file (the operations listed in the 3D view), the feed and spindle overrides go back to 100%. The rapid override is left as it is. Not at the first operation: overrides set before starting stay for it. The machine comes to a stop at the end of the previous operation (where it almost stops anyway, at the top of its retract) so the reset lands between the two operations. Off: overrides stay until changed, as in upstream gSender.',
+                            'GGSender: when the job starts the next operation of the file, the feed and spindle overrides go back to 100%. The operations are the operations in the list of the 3D view. The rapid override does not change. This does not occur at the first operation. The machine stops for a short time at the top of the retract, between the two operations. Off: the overrides do not change (upstream).',
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
@@ -300,7 +309,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'boolean',
                         defaultValue: true,
                         description:
-                            'GGSender: the Resume From button replaces Start From. Choose an N number (or the line where the last job stopped, or the start of an operation); the dialog shows the line, its operation and tool, and every line it will send first: up to the tool change safe height, the program\'s modes at that line, an optional tool change, spindle and spin-up wait, coolant, over the start point, rapid down to the operation\'s highest rapid height, then fed down at its plunge feed. Off: upstream Start From.',
+                            'GGSender: the Resume From button replaces Start From. Select an N number, the line where the last job stopped, or the start of an operation. Before the machine moves, the dialog shows the line, its operation, its tool, and all the lines that it sends first. Off: the upstream Start From.',
                     },
                     {
                         label: 'Homed state from the controller',
@@ -308,7 +317,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'boolean',
                         defaultValue: true,
                         description:
-                            'GGSender: the pre-flight travel check counts the machine as homed when the controller reports a homing (from a pendant, for example) or was already out of alarm when gSender connected. FluidNC leaves its power-up alarm only by homing or by $X, so the second case also covers an unlock without homing; the pre-flight says so. Off: only a homing sent from gSender counts (upstream). The rapid-position, go-to and parking buttons always use the upstream rule.',
+                            'GGSender: the pre-flight travel check uses the homed state from the controller. The machine is homed if the controller reports a homing cycle, for example from a pendant. It is also homed if the controller is not in alarm when gSender connects. But $X also removes the alarm without a homing cycle, and the pre-flight tells you this. Off: only a homing cycle from gSender counts (upstream). The rapid-position, go-to and parking buttons always use the upstream rule.',
                     },
                     {
                         label: 'Pre-flight check on file load',
@@ -321,7 +330,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         ],
                         defaultValue: 'When there are warnings',
                         description:
-                            'GGSender: when to open the pre-flight panel by itself after loading a file. It can always be opened with the CHK button in the 3D view.',
+                            'GGSender: when the pre-flight panel opens automatically after you load a file. You can always open it with the CHK button in the 3D view.',
                     },
                     {
                         label: 'Hidden pre-flight warnings',
@@ -329,7 +338,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'textarea',
                         defaultValue: '',
                         description:
-                            'GGSender: kinds of pre-flight warning not shown, not counted on the CHK badge and not opening the panel. One code per line; added by "Hide this kind" in the pre-flight panel. Errors cannot be hidden. Empty the box to show everything again.',
+                            'GGSender: the pre-flight warnings that do not show. They are not on the CHK badge, and they do not open the panel. Write one code on each line. "Hide this kind" in the pre-flight panel adds a code. You cannot hide errors. To show all the warnings again, remove all the codes.',
                     },
                     {
                         label: 'Operations list in the 3D view',
@@ -337,7 +346,15 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'boolean',
                         defaultValue: true,
                         description:
-                            "GGSender: list the file's operations (the names Fusion writes as comments) grouped by tool change, with the one running, those done and those to come, and the time to the next tool change. Off, or for a file without such comments: upstream gSender's tool timeline.",
+                            'GGSender: the 3D view shows a list of the operations of the file, in groups for each tool. The list shows the operation that runs, the operations that are done and the operations to come. It also shows the time to the next tool change. Fusion writes the operation names as comments. Off, or for a file without these comments: the upstream tool timeline.',
+                    },
+                    {
+                        label: 'Click an operation to show only its toolpath',
+                        key: 'workspace.gg.isolateOperation',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: a click on an operation in the operations list shows only the toolpath of that operation in the 3D view. The other toolpaths are hidden. A click on the toolpath then selects only a move of that operation. Click the operation again, or click "Show all", to see all toolpaths. Off: a click on an operation selects its first move.',
                     },
                     {
                         label: 'Tool drawing at tool change',
@@ -345,7 +362,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         type: 'boolean',
                         defaultValue: true,
                         description:
-                            "GGSender: next to the tool number in the tool change window, draw the tool from the file's tool table (Fusion's \"T5 D=6 CR=0 - flat end mill\" comments) with its diameter, corner radius, taper, deepest Z and the operations it is for.",
+                            'GGSender: the tool change window shows a drawing of the tool, next to the tool number. The drawing uses the tool table of the file, for example the Fusion comment "T5 D=6 CR=0 - flat end mill". It shows the diameter, the corner radius, the taper, the lowest Z and the operations of the tool.',
                     },
                     // --------------------------------------------------------
                     {
@@ -2069,7 +2086,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         key: 'workspace.toolChange.sendToolNumber',
                         defaultValue: false,
                         description:
-                            'GGSender: when off, T words are kept out of the g-code stream and gSender tracks the tool number itself. Grbl-family firmware rejects tool numbers above 255 (error:38). Ignored when Passthrough is on.',
+                            'GGSender: off: gSender removes the T words from the G-code and keeps the tool number itself. Grbl-type firmware does not accept tool numbers above 255 (error:38). If Passthrough is on, this setting has no effect.',
                         onApply: () => {
                             updateToolchangeContext();
                         },
@@ -2088,7 +2105,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         max: 0,
                         defaultValue: -0.1,
                         description:
-                            'GGSender: machine Z the tool change wizards retract to before moving in X/Y, in mm. 0 is the top of travel; use a small negative value to stay clear of the soft limit. (Upstream gSender uses -5 or -10.)',
+                            'GGSender: the machine Z that the tool change wizards go up to before they move in X and Y, in mm. 0 is the top of the travel. Use a small negative value to stay away from the soft limit. Upstream gSender uses -5 or -10.',
                         hidden: (getPending) => {
                             const strategy = getPending(
                                 'workspace.toolChangeOption',
@@ -2107,7 +2124,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         key: 'workspace.toolChange.returnToStartZ',
                         defaultValue: false,
                         description:
-                            'GGSender: when off, the machine stays at the tool change safe height after returning to X/Y and the program continues from there. When on, it plunges back to the Z it was at when the tool change started (upstream behaviour).',
+                            'GGSender: off: after the machine goes back to X/Y, it stays at the tool change safe height. The program continues from there. On: the machine goes down to the Z where the tool change started (upstream).',
                         hidden: (getPending) => {
                             const strategy = getPending(
                                 'workspace.toolChangeOption',
@@ -2126,7 +2143,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         key: 'workspace.gg.toolChangeEnter',
                         defaultValue: true,
                         description:
-                            'GGSender: in the tool change window, the Run button of each step is large and sits at the bottom of the window, and Enter presses it. One step per press. Enter does nothing while a step runs, during the first 0.7 s after a step appears, when the step has already been run, while the machine is moving, or when the step offers several actions; typing in a text field is not affected. While the window is open, Enter does nothing else. Off: upstream\'s small Run button.',
+                            'GGSender: in the tool change window, the Run button of each step is large and at the bottom of the window. Push Enter to push the Run button. Each push runs one step. Enter has no effect when a step runs, or for 0.7 s after a step shows. It also has no effect after the step ran, when the machine moves, or when a step has more than one action. Enter has no other effect when the window is open, but you can type in text fields. Off: the small upstream Run button.',
                         hidden: (getPending) => {
                             const strategy = getPending(
                                 'workspace.toolChangeOption',
@@ -2137,6 +2154,21 @@ export const SettingsMenu: SettingsMenuSection[] = [
                                 strategy === 'Pause' ||
                                 strategy === 'Code'
                             );
+                        },
+                    },
+                    {
+                        label: 'Tool change follows the tool sensor reference',
+                        type: 'boolean',
+                        key: 'workspace.gg.referenceGuard',
+                        defaultValue: true,
+                        description:
+                            'GGSender: gSender monitors the work Z offset after each probe on the tool sensor. If Z zero changed after the last probe, the reference is not correct. The next tool change then measures the tool in the spindle first. The tool change window shows the cause and lets you use the old reference. Off: a tool change after the first tool change always uses the reference (upstream). A job started with Resume From always follows the reference.',
+                        hidden: (getPending) => {
+                            const strategy = getPending(
+                                'workspace.toolChangeOption',
+                                '',
+                            );
+                            return strategy !== 'Fixed Tool Sensor';
                         },
                     },
                     // --------------------------------------------------------
@@ -2183,7 +2215,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         key: 'workspace.toolChange.feedRules',
                         defaultValue: '',
                         description:
-                            'GGSender: rewrite F and S words while a given tool is cutting. One rule per line, first match wins. Can be changed while a job runs; applies from the next F or S word sent.\n\nT5 F1000 -> F200 (replace a feed)\nT5 F>800 -> F800 (cap)\nT5 F* -> 50% (scale every feed)\nT12 S18000 -> S12000 (spindle speed)\nT* S* -> 90% (any tool)\n\nLines starting with # are ignored. Leave empty for no rules.',
+                            'GGSender: change the F and S words when a given tool cuts. Write one rule on each line. If more than one rule applies, the first rule has priority. You can change the rules during a job. A change has an effect from the next F or S word.\n\nT5 F1000 -> F200 (replace a feed)\nT5 F>800 -> F800 (cap)\nT5 F* -> 50% (scale every feed)\nT12 S18000 -> S12000 (spindle speed)\nT* S* -> 90% (any tool)\n\ngSender ignores lines that start with #. For no rules, leave the box empty.',
                         onApply: () => {
                             updateToolchangeContext();
                             const { errors } = parseFeedRules(

@@ -97,6 +97,39 @@ export const vertexRangeForLine = (
 };
 
 /**
+ * Vertices drawn by the file lines firstLine to endLine (0-based, endLine not
+ * included; null: to the end of the file), or null when they drew nothing.
+ * Used to show one operation alone.
+ *
+ * The range starts at the start point of the first move, so the move that
+ * brings the tool to the first position of these lines is part of it.
+ */
+export const vertexRangeForLineSpan = (
+    frames: NumArray,
+    frameLines: NumArray,
+    firstLine: number,
+    endLine: number | null,
+): VertexRange | null => {
+    if (!frames || !frameLines || frames.length !== frameLines.length) {
+        return null;
+    }
+    if (!Number.isInteger(firstLine) || firstLine < 0) {
+        return null;
+    }
+    if (endLine !== null && !(endLine > firstLine)) {
+        return null;
+    }
+    const first = lowerBound(frameLines, firstLine);
+    const stop = endLine === null ? frameLines.length : lowerBound(frameLines, endLine);
+    if (stop <= first) {
+        return null;
+    }
+    const start = first > 0 ? frames[first - 1] : 0;
+    const end = frames[stop - 1];
+    return end > start ? { start, end } : null;
+};
+
+/**
  * The nearest line before (dir -1) or after (dir 1) `line` that drew
  * something, or null when there is none.
  */
@@ -159,7 +192,10 @@ export interface ScreenHit {
  * @param height     canvas height in CSS pixels
  * @param px, py     click position in CSS pixels from the canvas' top left
  * @param maxDistance  ignore segments further than this many pixels
- * @param vertexCount  how many vertices to consider (defaults to all)
+ * @param vertexCount  one past the last vertex to consider (defaults to all)
+ * @param firstVertex  first vertex to consider (defaults to 0). With
+ *                     vertexCount it limits the search to a part of the
+ *                     toolpath, for example one operation shown alone.
  *
  * Every pair of consecutive vertices is tested, because that is what is
  * drawn. A straight move is one such pair; between two moves there is a
@@ -177,9 +213,12 @@ export const nearestSegmentOnScreen = (
     py: number,
     maxDistance = 8,
     vertexCount = Math.floor(positions.length / 3),
+    firstVertex = 0,
 ): ScreenHit | null => {
     const m = matrix;
-    const count = Math.min(vertexCount, Math.floor(positions.length / 3));
+    const stop = Math.min(vertexCount, Math.floor(positions.length / 3));
+    const first = Number.isInteger(firstVertex) && firstVertex > 0 ? firstVertex : 0;
+    const count = stop - first;
     if (count < 2 || !(width > 0) || !(height > 0)) {
         return null;
     }
@@ -188,9 +227,9 @@ export const nearestSegmentOnScreen = (
     const sx = new Float32Array(count);
     const sy = new Float32Array(count);
     for (let i = 0; i < count; i++) {
-        const x = positions[i * 3];
-        const y = positions[i * 3 + 1];
-        const z = positions[i * 3 + 2];
+        const x = positions[(first + i) * 3];
+        const y = positions[(first + i) * 3 + 1];
+        const z = positions[(first + i) * 3 + 2];
         const w = m[3] * x + m[7] * y + m[11] * z + m[15];
         if (!(w > 1e-9)) {
             sx[i] = NaN;
@@ -229,6 +268,6 @@ export const nearestSegmentOnScreen = (
     }
 
     return best >= 0
-        ? { vertexIndex: best, distance: Math.sqrt(bestDist2) }
+        ? { vertexIndex: first + best, distance: Math.sqrt(bestDist2) }
         : null;
 };

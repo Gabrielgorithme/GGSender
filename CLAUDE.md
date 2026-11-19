@@ -22,11 +22,13 @@ bun install --ignore-scripts                          # dependencies (403 on bro
 node_modules/.bin/jest --config jest.config.js        # all tests
 scripts/gg/typecheck.sh                               # fork files must have 0 type errors (NOT node_modules/.bin/tsc)
 scripts/gg/build.sh                                   # build into dist/gsender
-node scripts/gg/pack-asar.mjs --stock <official 1.6.4 app.asar> --out app.asar
+scripts/gg/fetch-stock-asar.sh stock/app.asar         # official 1.6.4 app.asar, downloaded and verified
+node scripts/gg/pack-asar.mjs --stock stock/app.asar --out app.asar
 ```
 
-The official `app.asar` comes from `gSender-1.6.4-x64.exe` on Sienci's GitHub release page; how
-to extract it is in `GGSENDER.md` ("Package and install").
+`.github/workflows/gg.yml` does the same on GitHub: a pull request into `gg/main` gets the tests
+and an `app.asar` artifact; a new version in `gg-build.json` on `gg/main` is published as a
+release (`gg-v<version>`) with that version's notes from `GGSENDER.md`.
 
 ## Rules
 
@@ -41,7 +43,8 @@ to extract it is in `GGSENDER.md` ("Package and install").
    existing installs, add a step to `src/app/src/lib/gg/migrations.ts` (saved settings win over
    defaults).
 5. Each build: bump `src/app/src/gg-build.json`, add a change-log entry and a machine checklist to
-   `GGSENDER.md`, one commit per change.
+   `GGSENDER.md`, one commit per change. When the build adds something a visitor should know, add
+   it to `README.md` (the front page of the repository).
 6. Deliver the packaged `app.asar` to the owner. Say plainly what was not checked: nothing here is
    run on Windows or on the machine.
 

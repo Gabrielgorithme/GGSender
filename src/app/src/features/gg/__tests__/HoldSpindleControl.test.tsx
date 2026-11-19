@@ -60,7 +60,7 @@ describe('GGSender: hold control', () => {
         expect(button).toHaveTextContent('Stop spindle');
         fireEvent.click(button);
         expect(commands).toContainEqual(['gg:hold:spindle']);
-        expect(screen.getByTestId('gg-hold-caption')).toHaveTextContent('Held · spindle turning');
+        expect(screen.getByTestId('gg-hold-caption')).toHaveTextContent('Hold. The spindle turns.');
     });
 
     it('spindle stopped: "Start spindle", and what Resume will do', () => {
@@ -74,9 +74,9 @@ describe('GGSender: hold control', () => {
         render(<HoldSpindleControl />);
         send({ holding: false, canToggle: false });
         expect(screen.getByTestId('gg-hold-spindle')).toBeDisabled();
-        expect(screen.getByTestId('gg-hold-spindle')).toHaveTextContent('Holding…');
+        expect(screen.getByTestId('gg-hold-spindle')).toHaveTextContent('Hold…');
         send({ pending: true, stopped: true, canToggle: false });
-        expect(screen.getByTestId('gg-hold-spindle')).toHaveTextContent('Stopping spindle…');
+        expect(screen.getByTestId('gg-hold-spindle')).toHaveTextContent('Spindle stops…');
         expect(screen.getByTestId('gg-hold-spindle')).toBeDisabled();
     });
 
@@ -86,11 +86,11 @@ describe('GGSender: hold control', () => {
             render(<HoldSpindleControl />);
             send({ resuming: true, resumeInMs: 3000, canToggle: false });
             expect(screen.queryByTestId('gg-hold-spindle')).toBeNull();
-            expect(screen.getByTestId('gg-hold-caption')).toHaveTextContent('resuming in 3 s');
+            expect(screen.getByTestId('gg-hold-caption')).toHaveTextContent('The job resumes in 3 s.');
             act(() => {
                 jest.advanceTimersByTime(1100);
             });
-            expect(screen.getByTestId('gg-hold-caption')).toHaveTextContent('resuming in 2 s');
+            expect(screen.getByTestId('gg-hold-caption')).toHaveTextContent('The job resumes in 2 s.');
         } finally {
             jest.useRealTimers();
         }
@@ -99,7 +99,7 @@ describe('GGSender: hold control', () => {
     it('spindle was off at the pause: nothing to stop', () => {
         expect(holdDisplay({ ...base, spindleWasOn: false, canToggle: false }, null, 5)).toMatchObject({
             button: null,
-            caption: 'Held · spindle was off',
+            caption: 'Hold. The spindle was off.',
         });
     });
 });

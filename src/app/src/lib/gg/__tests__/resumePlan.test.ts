@@ -80,7 +80,24 @@ describe('GGSender: resume plan', () => {
         const p = plan('N26');
         expect(p.spliceSeq).toBe(p.seq - p.preamble.length);
         const payload = resumePayload(p, 30, false);
-        expect(payload).toEqual({ seq: p.seq, text: 'N26 X20 Y20 Z-2.5', total: 30, preamble: p.preamble, target: null, measureTool: false });
+        expect(payload).toEqual({
+            seq: p.seq,
+            text: 'N26 X20 Y20 Z-2.5',
+            total: 30,
+            preamble: p.preamble,
+            target: null,
+            toolMode: 'keep',
+            measureTool: false,
+        });
+    });
+
+    it('the payload carries what the tool change must do', () => {
+        const p = plan('N26', { measureTool: true });
+        expect(resumePayload(p, 30, 'reference')).toMatchObject({ toolMode: 'reference', measureTool: true });
+        expect(resumePayload(p, 30, 'measure-old')).toMatchObject({ toolMode: 'measure-old', measureTool: true });
+        expect(resumePayload(p, 30, 'full')).toMatchObject({ toolMode: 'full', measureTool: true });
+        // the 0.7.0 form
+        expect(resumePayload(p, 30, true)).toMatchObject({ toolMode: 'measure', measureTool: true });
     });
 
     it('tool change first when asked', () => {
@@ -145,7 +162,7 @@ describe('GGSender: resume plan', () => {
         const inc = PROGRAM.replace('N25 G1 X20 Y10 F1200', 'N25 G91 G1 X10 F1200');
         expect(plan('N26', {}, inc).problems.join(' ')).toMatch(/G91/);
         const rotary = PROGRAM.replace('N25 G1 X20 Y10 F1200', 'N25 G1 X20 Y10 A90 F1200');
-        expect(plan('N26', {}, rotary).problems.join(' ')).toMatch(/Rotary/);
+        expect(plan('N26', {}, rotary).problems.join(' ')).toMatch(/rotary/);
         const ended = PROGRAM.replace('N25 G1 X20 Y10 F1200', 'N25 M30');
         expect(plan('N26', {}, ended).problems.join(' ')).toMatch(/ends at line/);
         const inverse = PROGRAM.replace('N24 G1 Z-2 F300', 'N24 G93 G1 Z-2 F3');
@@ -156,7 +173,7 @@ describe('GGSender: resume plan', () => {
     it('too close to the start for the entry lines: refused', () => {
         const short = ['G21 G90', 'S1000 M3', 'G0 X0 Y0 Z1', 'G1 Z-1 F100', 'G1 X5', 'G1 Y5'].join('\n');
         const p = planResume(short, analyzeJob(short), 5, OPTS);
-        expect(p.problems.join(' ')).toMatch(/too close to the start/);
+        expect(p.problems.join(' ')).toMatch(/too near the start/);
     });
 
     it('a comment or blank line chosen: resumes at the next line with code', () => {

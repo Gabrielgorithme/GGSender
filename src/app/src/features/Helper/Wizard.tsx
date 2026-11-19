@@ -61,6 +61,8 @@ export function updateToolchangeContext(mappings = null) {
 
 const Wizard = () => {
     const { title, visible, minimized, overlay } = useWizardContext();
+    // GGSender: for the height of the window
+    const ggBanner = Boolean((useWizardContext() as any).toolchangeContext?.ggDecision);
     const [vizEl, setVizEl] = useState<Element | null>(null);
 
     useEffect(() => {
@@ -116,7 +118,8 @@ const Wizard = () => {
                     </div>
 
                     {/* Body */}
-                    <div className="flex h-[420px]">
+                    {/* GGSender: taller when the tool sensor reference banner is shown, so the Run button stays in view */}
+                    <div className={ggBanner ? 'flex h-[500px] max-h-[calc(100vh-10rem)]' : 'flex h-[420px]'}>
                         <Stepper />
                         <Instructions />
                     </div>

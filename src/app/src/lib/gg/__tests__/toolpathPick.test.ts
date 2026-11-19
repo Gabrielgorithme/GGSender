@@ -4,6 +4,7 @@ import {
     nearestSegmentOnScreen,
     stepDrawnLine,
     vertexRangeForLine,
+    vertexRangeForLineSpan,
 } from '../toolpathPick';
 
 /*
@@ -60,6 +61,44 @@ describe('GGSender: file line to toolpath vertices', () => {
             expect(v).toBeGreaterThanOrEqual(range.start);
             expect(v).toBeLessThan(range.end);
         }
+    });
+});
+
+describe('GGSender: file lines to toolpath vertices (one operation alone)', () => {
+    it('gives the vertices of all moves of the lines, end line not included', () => {
+        // lines 2 to 4: G0 X10 and G1 Y10
+        expect(vertexRangeForLineSpan(frames, frameLines, 2, 5)).toEqual({ start: 0, end: 4 });
+        // lines 4 to 6: G1 Y10, M3, the arc
+        expect(vertexRangeForLineSpan(frames, frameLines, 4, 7)).toEqual({ start: 2, end: 10 });
+        // from the arc to the end of the file
+        expect(vertexRangeForLineSpan(frames, frameLines, 6, null)).toEqual({ start: 4, end: 12 });
+        // the whole file
+        expect(vertexRangeForLineSpan(frames, frameLines, 0, null)).toEqual({ start: 0, end: 12 });
+    });
+
+    it('starts and ends on lines without an entry (comments, blank lines)', () => {
+        // line 3 is blank, line 0 a comment: the moves between are found
+        expect(vertexRangeForLineSpan(frames, frameLines, 3, 6)).toEqual({ start: 2, end: 4 });
+        expect(vertexRangeForLineSpan(frames, frameLines, 0, 3)).toEqual({ start: 0, end: 2 });
+    });
+
+    it('the ranges of lines that follow each other join without a gap or an overlap', () => {
+        const a = vertexRangeForLineSpan(frames, frameLines, 0, 5);
+        const b = vertexRangeForLineSpan(frames, frameLines, 5, 7);
+        const c = vertexRangeForLineSpan(frames, frameLines, 7, null);
+        expect(a.end).toBe(b.start);
+        expect(b.end).toBe(c.start);
+        expect(c.end).toBe(frames[frames.length - 1]);
+    });
+
+    it('is null when the lines drew nothing, or for bad input', () => {
+        expect(vertexRangeForLineSpan(frames, frameLines, 0, 2)).toBeNull(); // comment and G21
+        expect(vertexRangeForLineSpan(frames, frameLines, 5, 6)).toBeNull(); // M3 alone
+        expect(vertexRangeForLineSpan(frames, frameLines, 8, null)).toBeNull(); // after the file
+        expect(vertexRangeForLineSpan(frames, frameLines, 4, 4)).toBeNull(); // no line
+        expect(vertexRangeForLineSpan(frames, frameLines, 6, 2)).toBeNull();
+        expect(vertexRangeForLineSpan(frames, frameLines, -1, 4)).toBeNull();
+        expect(vertexRangeForLineSpan(frames, Uint32Array.from([1]), 0, null)).toBeNull();
     });
 });
 
@@ -132,6 +171,18 @@ describe('GGSender: nearest segment on screen', () => {
             -0.5, 0, 0, 0.5, 0, 0,
         ]);
         expect(nearestSegmentOnScreen(overlap, identity, W, H, 100, 100).vertexIndex).toBe(2);
+    });
+
+    it('searches only the vertices asked for', () => {
+        // the click is on the first move; limited to the second move, that one is too far
+        expect(nearestSegmentOnScreen(positions, identity, W, H, 100, 102, 8, 4, 2)).toBeNull();
+        // with more distance allowed the hit is in the range, numbered in the whole list
+        const hit = nearestSegmentOnScreen(positions, identity, W, H, 100, 102, 200, 4, 2);
+        expect(hit.vertexIndex).toBe(2);
+        // limited to the first move, a click on the second finds nothing
+        expect(nearestSegmentOnScreen(positions, identity, W, H, 153, 70, 8, 2, 0)).toBeNull();
+        // no limits: as before
+        expect(nearestSegmentOnScreen(positions, identity, W, H, 153, 70, 8, 4, 0)).toEqual({ vertexIndex: 2, distance: 3 });
     });
 
     it('skips points behind the camera', () => {

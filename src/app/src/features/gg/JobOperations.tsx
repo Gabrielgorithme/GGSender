@@ -7,6 +7,11 @@
  * upstream tool timeline when the file has operations and the setting
  * "Operations list in the 3D view" is on; otherwise the upstream timeline is
  * shown (it stays mounted either way, so it keeps its own subscriptions).
+ *
+ * A click on an operation shows only the toolpath of that operation in the
+ * 3D view (setting "Click an operation to show only its toolpath"; off: the
+ * click selects the first move of the operation). While a part of the
+ * toolpath is hidden, the panel says so, also when the list is closed.
  */
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import pubsub from 'pubsub-js';
@@ -15,7 +20,7 @@ import cx from 'classnames';
 
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
 import { WORKFLOW_STATE_PAUSED, WORKFLOW_STATE_RUNNING } from 'app/constants';
-import { JobInfo } from 'app/lib/gg/jobOperations';
+import { JobInfo, operationLineSpan } from 'app/lib/gg/jobOperations';
 import { JOB_INFO_TOPIC, JobInfoEntry, getJobInfo } from 'app/lib/gg/jobInfoStore';
 import {
     OperationState,
@@ -29,10 +34,33 @@ import {
 } from 'app/lib/gg/jobProgress';
 import { toolSummary } from 'app/lib/gg/toolSpec';
 import { ToolDrawing } from './ToolDrawing';
-import { requestPickLine } from './pickTopics';
+import {
+    ISOLATE_CHANGED,
+    IsolationState,
+    getCurrentIsolation,
+    requestIsolate,
+    requestIsolateClear,
+    requestPickLine,
+} from './pickTopics';
 import { useStoreSetting } from './useStoreSetting';
 
 export const OPERATIONS_PANEL_KEY = 'workspace.gg.operationsPanel';
+export const ISOLATE_OPERATION_KEY = 'workspace.gg.isolateOperation';
+
+const isolationKey = (index: number) => `op:${index}`;
+
+/** Hook: the part of the toolpath that the 3D view shows alone, or null. */
+export const useIsolation = (): IsolationState | null => {
+    const [value, setValue] = useState<IsolationState | null>(getCurrentIsolation());
+    useEffect(() => {
+        setValue(getCurrentIsolation());
+        const token = pubsub.subscribe(ISOLATE_CHANGED, (_msg: string, next: IsolationState | null) => setValue(next));
+        return () => {
+            pubsub.unsubscribe(token);
+        };
+    }, []);
+    return value;
+};
 
 const STATE_MARK: Record<OperationState, string> = {
     done: '✓',
@@ -55,6 +83,30 @@ export const OperationsList = ({ info, seq, feedOverride = 100 }: ListProps) => 
     const nextGroup = curOp ? info.groups[curOp.group + 1] : null;
     const toNext = secondsToNextToolChange(info, seq, feedOverride);
     const finished = seq !== null && cur >= info.operations.length;
+    const isolateOnClick = useStoreSetting<boolean>(ISOLATE_OPERATION_KEY, true);
+    const isolation = useIsolation();
+
+    // the setting turned off: nothing stays hidden that the list can no longer bring back
+    useEffect(() => {
+        if (!isolateOnClick && getCurrentIsolation()) {
+            requestIsolateClear();
+        }
+    }, [isolateOnClick]);
+
+    const onOperationClick = (index: number) => {
+        const op = info.operations[index];
+        const span = operationLineSpan(info.operations, index);
+        // an operation without a move has no toolpath to show
+        if (!isolateOnClick || !span || op.firstMotionLine === null) {
+            requestPickLine(op.firstMotionLine ?? op.line);
+            return;
+        }
+        if (isolation && isolation.key === isolationKey(index)) {
+            requestIsolateClear();
+            return;
+        }
+        requestIsolate({ key: isolationKey(index), label: op.name, ...span });
+    };
 
     useEffect(() => {
         currentRef.current?.scrollIntoView?.({ block: 'nearest' });
@@ -97,6 +149,26 @@ export const OperationsList = ({ info, seq, feedOverride = 100 }: ListProps) => 
                 <span aria-hidden>{collapsed ? '▾' : '▴'}</span>
             </button>
             {nextChangeLine && <div className="px-3 py-1 border-b border-gray-200 dark:border-gray-700">{nextChangeLine}</div>}
+            {isolation && (
+                <div
+                    className="flex items-center gap-2 px-3 py-1 border-b border-pink-300 dark:border-pink-800 bg-pink-50 dark:bg-pink-950/50 text-xs"
+                    data-testid="gg-ops-isolated"
+                >
+                    <span className="truncate" title={`The 3D view shows only ${isolation.label}. The other toolpaths are hidden.`}>
+                        The 3D view shows only <b>{isolation.label}</b>.
+                    </span>
+                    <span className="flex-1" />
+                    <button
+                        type="button"
+                        className="px-2 py-0.5 rounded border border-pink-400 dark:border-pink-700 bg-white dark:bg-dark font-semibold whitespace-nowrap"
+                        onClick={() => requestIsolateClear()}
+                        title="Show the toolpaths of all operations"
+                        data-testid="gg-ops-show-all"
+                    >
+                        Show all
+                    </button>
+                </div>
+            )}
             {!collapsed && (
                 <ol className="overflow-y-auto px-1 py-1" data-testid="gg-ops-list">
                     {info.groups.map((g) => {
@@ -133,6 +205,14 @@ export const OperationsList = ({ info, seq, feedOverride = 100 }: ListProps) => 
                                         const op = info.operations[i];
                                         const state: OperationState | null = states ? states[i] : null;
                                         const isCurrent = state === 'current';
+                                        const isIsolated = Boolean(isolation && isolation.key === isolationKey(i));
+                                        const canIsolate = isolateOnClick && op.firstMotionLine !== null;
+                                        let clickHint = 'Click to see its first move in the 3D view.';
+                                        if (canIsolate) {
+                                            clickHint = isIsolated
+                                                ? 'Click to show all operations in the 3D view.'
+                                                : 'Click to show only this operation in the 3D view.';
+                                        }
                                         return (
                                             <li
                                                 key={i}
@@ -140,17 +220,20 @@ export const OperationsList = ({ info, seq, feedOverride = 100 }: ListProps) => 
                                                 className={cx('pl-7 pr-2 py-0.5 rounded', {
                                                     'bg-sky-50 dark:bg-sky-950/60 font-semibold': isCurrent,
                                                     'text-gray-500 dark:text-gray-400': state === 'done',
+                                                    'ring-1 ring-inset ring-pink-500': isIsolated,
                                                 })}
                                                 data-testid={`gg-op-${i}`}
                                                 data-state={state ?? 'idle'}
+                                                data-isolated={isIsolated ? 'true' : undefined}
                                             >
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="w-3 text-xs text-sky-600 dark:text-sky-400">{state ? STATE_MARK[state] : ''}</span>
                                                     <button
                                                         type="button"
                                                         className="truncate text-left hover:underline"
-                                                        onClick={() => requestPickLine(op.firstMotionLine ?? op.line)}
-                                                        title={`${op.name}${op.notes.length ? ` — ${op.notes.join(' / ')}` : ''}\nLine ${op.line + 1}. Click: show its first move in the 3D view.`}
+                                                        onClick={() => onOperationClick(i)}
+                                                        aria-pressed={canIsolate ? isIsolated : undefined}
+                                                        title={`${op.name}${op.notes.length ? ` — ${op.notes.join(' / ')}` : ''}\nLine ${op.line + 1}. ${clickHint}`}
                                                     >
                                                         {op.name}
                                                     </button>
@@ -214,6 +297,13 @@ export const JobOperations = ({ fallback }: { fallback?: ReactNode }) => {
     const fileLoaded = useTypedSelector((s) => Boolean(get(s, 'file.fileLoaded', false)));
     const { seq, feedOverride } = useRunningSeq();
     const show = Boolean(enabled && entry && fileLoaded && entry.info.operations.length > 0);
+    // the list goes away (setting off, file closed): without it nothing would
+    // say that a part of the toolpath is hidden, so show everything again
+    useEffect(() => {
+        if (!show && getCurrentIsolation()) {
+            requestIsolateClear();
+        }
+    }, [show]);
     return (
         <>
             <div className={show ? 'hidden' : undefined} data-testid="gg-ops-fallback">

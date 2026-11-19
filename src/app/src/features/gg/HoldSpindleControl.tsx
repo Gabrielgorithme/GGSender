@@ -39,31 +39,31 @@ export const holdDisplay = (s: HoldState, secondsLeft: number | null, spinup: nu
             tone: 'busy',
             caption:
                 secondsLeft !== null
-                    ? `Spindle starting · resuming in ${secondsLeft} s`
-                    : 'Resuming as soon as the machine has stopped…',
+                    ? `The spindle starts. The job resumes in ${secondsLeft} s.`
+                    : 'The job resumes when the machine is stopped.',
         };
     }
     if (!s.holding) {
-        return { button: 'Holding…', tone: 'busy', caption: 'Stopping the machine' };
+        return { button: 'Hold…', tone: 'busy', caption: 'The machine stops.' };
     }
     if (s.spindleWasOn === false) {
-        return { button: null, tone: 'busy', caption: 'Held · spindle was off' };
+        return { button: null, tone: 'busy', caption: 'Hold. The spindle was off.' };
     }
     if (s.pending) {
         return {
-            button: s.stopped ? 'Stopping spindle…' : 'Starting spindle…',
+            button: s.stopped ? 'Spindle stops…' : 'Spindle starts…',
             tone: 'busy',
-            caption: 'Held',
+            caption: 'Hold.',
         };
     }
     if (s.stopped) {
         return {
             button: 'Start spindle',
             tone: 'start',
-            caption: `Held · spindle stopped · Resume starts it and waits ${spinup} s`,
+            caption: `Hold. The spindle is stopped. Resume starts it and waits ${spinup} s.`,
         };
     }
-    return { button: 'Stop spindle', tone: 'stop', caption: 'Held · spindle turning' };
+    return { button: 'Stop spindle', tone: 'stop', caption: 'Hold. The spindle turns.' };
 };
 
 export const HoldSpindleControl = () => {

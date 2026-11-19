@@ -133,7 +133,7 @@ describe('GGSender pre-flight: machine and settings', () => {
         expect(codes(contextIssues(report, ctx({ loadedTool: null })))).toContain('LOADED_UNKNOWN');
         expect(codes(contextIssues(report, ctx({ loadedTool: '5' })))).toContain('LOADED_MATCHES');
         const differs = contextIssues(report, ctx({ loadedTool: '3' })).find((i) => i.code === 'LOADED_DIFFERS');
-        expect(differs.message).toMatch(/T3 .* T5/);
+        expect(differs.message).toMatch(/T3\b.*T5/);
     });
 
     it('says which tool cuts the moves before the first change', () => {
