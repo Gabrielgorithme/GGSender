@@ -51,10 +51,29 @@ node scripts/gg/pack-asar.mjs --stock <official app.asar> --out app.asar
 the files from `dist/gsender` (`main.js`, `preload.js`, `server-cli.js`, `server/index.js` and the
 whole `app/` folder). Everything else, including `node_modules`, is copied through byte for byte.
 
-To get the official `app.asar` without a Windows machine: download `gSender-1.6.4-x64.exe` from the
-official release page. The installer contains a 7-Zip archive; find the `7z` signature
-(`37 7A BC AF 27 1C`) in the file, cut from there to the end, and extract `resources/app.asar`
-with `7za`.
+To get the official `app.asar` without a Windows machine: `scripts/gg/fetch-stock-asar.sh
+<output>` downloads `gSender-1.6.4-x64.exe` from the official release page, cuts the 7-Zip archive
+out of the installer (it starts at the first `7z` signature, `37 7A BC AF 27 1C`), extracts
+`resources/app.asar` and checks the SHA-256 of both files. It needs `7z`, `7zz` or `7za`.
+
+## The repository on GitHub
+
+- `README.md` is the front page for visitors: what the fork adds, with pictures (`examples/gg/`), and
+  how to install it. It replaces upstream's README. Keep it short; the detail is in this file.
+- `examples/gg/demo-plate.nc` is the program in the first pictures: five operations, three tools, made
+  to lie over each other. It was written by a script, not by Fusion, in the form Fusion's post
+  writes.
+- `.github/workflows/gg.yml`: for a pull request into `gg/main`, the tests, the type check, the
+  build and the packaged `app.asar` as an artifact of the run (30 days). On `gg/main`, when the
+  version in `gg-build.json` has no release yet, the same archive is published as release
+  `gg-v<version>` with `app.asar`, its SHA-256, and the notes that `scripts/gg/release-notes.sh`
+  takes from the change log below. So: bump the version, write the change-log entry, merge, and
+  the release appears. The end-to-end scripts are not run there.
+- Upstream's own workflows (`CI.yml`, `auto-merge.yml`, `notify-on-release.yml`) carry
+  `if: github.repository == 'Sienci-Labs/gsender'`: they need Sienci's secrets and branches, and
+  one of them merges and pushes on a timer.
+- The branches `master`, `dev`, `feature/*`, `features/*` came with the fork and are upstream's.
+  `gg/0.x` are the fork's history; everything in them is in `gg/main`.
 
 Install:
 
@@ -1151,7 +1170,8 @@ Do these with the spindle off or as an air cut first.
   operation's first move, with the tool change; left here until the owner has used it.)
 - Editable tool-change sequences (text templates instead of code).
 - Air-cut mode (temporary Z offset).
-- Publish each build as a release with `app.asar` attached; optional Windows installer built by CI.
+- A Windows installer built by CI. (Each version is published as a release with `app.asar` since
+  0.7.3, see *The repository on GitHub*.)
 - Operations list: start the job from a chosen operation (needs the modal-state rebuild above).
   (0.7.2 shows one operation alone on a click.) Ideas, not asked for: a click on the tool row to
   show all operations of that tool; move the camera to the operation shown.
