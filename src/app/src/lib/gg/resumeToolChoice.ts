@@ -4,7 +4,12 @@
  * The tool choices of the Resume From dialog, and what each one asks of the
  * tool change at the start of the resumed job.
  *
- *   1  Same tool. Z zero did not change.             -> no tool change
+ *   1  Same tool. Z zero did not change.             -> no tool change.
+ *      Without a correct reference (none after a reconnection, for example)
+ *      this has a second answer: measure the tool as the reference before
+ *      the job continues (the default), or do not measure. Without a
+ *      reference a tool that breaks later cannot be replaced by measurement:
+ *      Z zero must then be set by hand.
  *   2  New or refitted tool. Z zero did not change.  -> the tool is measured
  *      against the tool sensor reference. Without a correct reference this
  *      needs a second answer: measure the old tool first (it must still be
@@ -24,6 +29,13 @@ import { ResumeToolMode } from './toolChangeDecision';
 export type ToolChoice = 1 | 2 | 3;
 /** The second answer of choice 2 when the reference is not correct. */
 export type ReferenceSource = 'old-tool' | 'old-reference';
+/** The second answer of choice 1 when the reference is not correct. */
+export type SameToolProbe = 'measure' | 'skip';
+
+/** Choice 1 asks whether to measure the tool when there is no correct reference. */
+export const sameToolAsks = (status: ReferenceStatus): boolean => status !== 'valid';
+/** Measure, unless the owner says no: a reference is what makes a broken tool replaceable. */
+export const DEFAULT_SAME_TOOL_PROBE: SameToolProbe = 'measure';
 
 /**
  * The choice selected when the dialog opens. null: gSender cannot tell, the
@@ -58,9 +70,11 @@ export const toolModeFor = (
     choice: ToolChoice | null,
     source: ReferenceSource | null,
     status: ReferenceStatus,
+    sameToolProbe: SameToolProbe = DEFAULT_SAME_TOOL_PROBE,
 ): ResumeToolMode | null => {
     if (choice === 1) {
-        return 'keep';
+        // a correct reference exists: nothing to measure
+        return sameToolAsks(status) && sameToolProbe === 'measure' ? 'reference-same' : 'keep';
     }
     if (choice === 3) {
         return 'reference';

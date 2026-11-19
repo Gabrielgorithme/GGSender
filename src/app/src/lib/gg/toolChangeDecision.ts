@@ -32,7 +32,7 @@ import { ReferenceSnapshot } from './probeStore';
 export type WizardVariant = 'reference' | 'full' | 'measure';
 
 /** What the resume dialog can ask for the tool change of its entry lines. */
-export type ResumeToolMode = 'keep' | 'measure' | 'measure-old' | 'full' | 'reference';
+export type ResumeToolMode = 'keep' | 'measure' | 'measure-old' | 'full' | 'reference' | 'reference-same';
 
 export type DecisionReason =
     | 'first-tool' // first M6 of a job started from the top: upstream's "First tool" setting
@@ -41,6 +41,7 @@ export type DecisionReason =
     | 'stale'
     | 'none'
     | 'resume-reference' // dialog choice 3
+    | 'resume-same-reference' // dialog choice 1, the tool measured as the reference first
     | 'resume-measure' // dialog choice 2, reference valid
     | 'resume-old-reference' // dialog choice 2, the old reference accepted
     | 'resume-full' // dialog choice 2, the old tool measured first
@@ -68,6 +69,10 @@ export const decideFixedSensor = ({ count, reference, resumed, resumeMode, guard
     // what the owner chose in the resume dialog, seconds ago
     if (resumeMode === 'reference') {
         return { variant: 'reference', reason: 'resume-reference', overrule: null };
+    }
+    if (resumeMode === 'reference-same') {
+        // the same measurement as choice 3, for another reason
+        return { variant: 'reference', reason: 'resume-same-reference', overrule: null };
     }
     if (resumeMode === 'full') {
         return { variant: 'full', reason: 'resume-full', overrule: null };

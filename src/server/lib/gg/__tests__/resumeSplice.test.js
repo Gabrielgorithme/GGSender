@@ -82,13 +82,23 @@ describe('GGSender: resume session', () => {
     };
 
     it('never touches the change count: a resumed job has no "first tool"', () => {
-        ['measure', 'full', 'reference'].forEach((mode) => {
+        ['measure', 'full', 'reference', 'reference-same'].forEach((mode) => {
             const sender = fakeSender();
             const s = new ResumeSession();
             expect(s.prepare(sender, withChange(mode)).error).toBeUndefined();
             s.begin(sender, s.take());
             expect(sender.state.toolChanges).toBe(0);
         });
+    });
+
+    it('"reference-same" (same tool, measured as the reference) needs the tool change line like the other measurements', () => {
+        const sender = fakeSender();
+        const s = new ResumeSession();
+        expect(s.prepare(sender, { ...plan(), toolMode: 'reference-same' }).error).toMatch(/no tool change/);
+        expect(s.prepare(sender, withChange('reference-same')).error).toBeUndefined();
+        s.begin(sender, s.take());
+        expect(s.takeToolMode()).toEqual({ resumed: true, mode: 'reference-same' });
+        expect(s.takeToolMode()).toEqual({ resumed: true, mode: null });
     });
 
     it('hands the tool mode to the first tool change only, and marks the job as resumed until it stops', () => {

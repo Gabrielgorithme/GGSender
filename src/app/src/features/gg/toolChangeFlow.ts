@@ -57,7 +57,7 @@ const firstToolVariant = async (comment: string): Promise<WizardVariant> => {
     return (await showFirstToolchangePrompt({ comment })) ? 'full' : 'reference';
 };
 
-const RESUME_MODES = ['keep', 'measure', 'measure-old', 'full', 'reference'];
+const RESUME_MODES = ['keep', 'measure', 'measure-old', 'full', 'reference', 'reference-same'];
 
 const decide = (context: Record<string, any>, reference: ReferenceSnapshot) => {
     const mode = context?.ggResume?.mode;

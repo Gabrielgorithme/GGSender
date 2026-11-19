@@ -13,6 +13,10 @@
 //   FIRST_TOOL = "Prompt for first tool" (default) | "Always probe length only" | "Always run full wizard"
 //   CHOICE = 3 (default) | 1   (1: resume keeping the tool, no Z zero by hand:
 //            the next M6 must ask for the new tool, never "first tool")
+//   NOREF = 1   as after a lost connection: gSender connects, the file is loaded and
+//            the job is resumed with no job run before, so there is no reference.
+//            Choice 1 with its default second answer: the tool is measured as the
+//            reference first (0.7.3). NOREF=skip: "Do not measure".
 const { chromium } = require('playwright');
 const fs = require('fs');
 const net = require('net');
@@ -20,7 +24,8 @@ const net = require('net');
 const SP = process.argv[2];
 const FILE = process.argv[3];
 const FIRST_TOOL = process.env.FIRST_TOOL || 'Prompt for first tool';
-const CHOICE = Number(process.env.CHOICE || 3);
+const NOREF = process.env.NOREF || '';
+const CHOICE = NOREF ? 1 : Number(process.env.CHOICE || 3);
 const PENDANT_PORT = Number(process.env.PENDANT_PORT || 2324);
 fs.mkdirSync(SP, { recursive: true });
 
@@ -117,6 +122,10 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
 
     await p.locator('input[type=file]').first().setInputFiles(FILE);
     await p.waitForTimeout(6000);
+    let firstPlane;
+    if (NOREF) {
+        firstPlane = (await pendant('state')).zeroPlane;
+    } else {
     await p.locator('button', { hasText: /^Start$/ }).first().click();
 
     // ---- first M6 of a job from the top: upstream's First tool setting
@@ -142,7 +151,7 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
     await waitWizardGone();
     check('after the first probe: reference valid (pictogram)', await waitChip('valid', 8000));
     const afterFirst = await pendant('state');
-    const firstPlane = afterFirst.zeroPlane;
+    firstPlane = afterFirst.zeroPlane;
     console.log('after first tool:', JSON.stringify(afterFirst));
 
     // ---- the job runs, then stops in its first operation
@@ -155,6 +164,7 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
         if (await btn.count()) { try { await btn.first().click({ timeout: 1000 }); } catch {} }
     }
     check('stopped: the reference is still valid', (await chipState()) === 'valid');
+    }
 
     let handPlane = firstPlane;
     if (CHOICE === 3) {
@@ -176,7 +186,19 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
     await p.locator('[data-testid=gg-resume-button]').click();
     await p.waitForTimeout(1500);
     console.log('resume reference block:', await text('gg-resume-reference'));
-    if (CHOICE === 3) {
+    if (NOREF) {
+        // no job was stopped: start in the first operation, a few moves in
+        await p.locator('[data-testid=gg-resume-query]').fill(process.env.NOREF_LINE || 'N100');
+        await p.waitForTimeout(600);
+        check('no reference, same tool: choice 1 is selected', await p.locator('[data-testid=gg-resume-tool-keep]').isChecked());
+        check('no reference: choice 1 asks, and "Measure first" is selected', await p.locator('[data-testid=gg-resume-same-tool-measure]').isChecked());
+        console.log('choice 1 box:', await text('gg-resume-same-tool'));
+        if (NOREF === 'skip') {
+            await p.locator('[data-testid=gg-resume-same-tool-skip]').click();
+        }
+        const pre = (await text('gg-resume-preamble')) || '';
+        check(NOREF === 'skip' ? '"Do not measure": no tool change line is sent' : '"Measure first": the tool change line is sent', /M6/.test(pre) === (NOREF !== 'skip'));
+    } else if (CHOICE === 3) {
         check('resume dialog: choice 3 is selected by default after a Z zero by hand', await p.locator('[data-testid=gg-resume-tool-reference]').isChecked());
     } else {
         check('resume dialog: choice 1 is selected by default (same tool, reference valid)', await p.locator('[data-testid=gg-resume-tool-keep]').isChecked());
@@ -187,7 +209,52 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
     const g10Before = fs.readFileSync(process.env.FAKE_LOG || '/tmp/fake.log', 'utf8').split('\n').filter((l) => /"ev":"wco"/.test(l) && /G10/.test(l)).length;
     await p.locator('[data-testid=gg-resume-start]').click();
 
-    if (CHOICE === 3) {
+    if (NOREF && NOREF !== 'skip') {
+        await waitWizard();
+        await shot('tc-07-resume-wizard');
+        const v = await attr('gg-toolchange-reason', 'data-variant');
+        check('choice 1, measure first: the wizard only measures the tool as the reference', v === 'reference', v);
+        const why = await text('gg-toolchange-reason-why');
+        console.log('choice 1 banner:', await text('gg-toolchange-reason-headline'), '|', why, '|', await text('gg-toolchange-zero'));
+        check('the window does not say that Z zero was set by hand', /same tool is in the spindle/.test(why || '') && !/You set Z zero/.test(why || ''));
+        check('no "Install New Tool" in that wizard', (await p.getByText('Install New Tool').count()) === 0);
+        await run('Probe Tool Length');
+        await run('Resume');
+        await waitWizardGone();
+        const st = await pendant('state');
+        console.log('after the measurement:', JSON.stringify(st));
+        check('measured as the reference: Z zero is unchanged', near(st.zeroPlane, handPlane), `${st.zeroPlane} vs ${handPlane}`);
+        check('there is a reference now', await waitChip('valid', 8000));
+    }
+    if (NOREF === 'skip') {
+        // ---- the program's next tool change, with no reference: the tool in the spindle first
+        await waitWizard();
+        await shot('tc-08-next-tool-wizard');
+        const v = await attr('gg-toolchange-reason', 'data-variant');
+        check('"Do not measure": the next M6 measures the tool in the spindle first, then asks for the new tool', v === 'full', v);
+        console.log('next tool banner:', await text('gg-toolchange-reason-headline'), '|', await text('gg-toolchange-reason-why'));
+        check('no first-tool prompt', (await p.getByRole('button', { name: 'Only Probe Tool Length' }).count()) === 0);
+        await run('Probe Initial Tool');
+        // the owner changes the tool only after the tool in the spindle was measured
+        check('the tool in the spindle was measured as the reference', await waitChip('valid', 20000));
+        await pendant('tool 22');
+        await run('Probe Changed Tool');
+        await run('Resume Cutting');
+        await waitWizardGone();
+        const end = await pendant('state');
+        console.log('after T2:', JSON.stringify(end));
+        check('after the next tool: Z zero is unchanged', near(end.zeroPlane, handPlane), `${end.zeroPlane} vs ${handPlane}`);
+        check('chip: reference valid', await waitChip('valid', 8000));
+        await p.locator('button', { hasText: /^Stop$/ }).first().click();
+        await p.waitForTimeout(1500);
+        check('no page errors', errors.length === 0);
+        const failedSkip = results.filter((r) => !r.ok).length;
+        console.log(`${results.length - failedSkip}/${results.length} checks passed`);
+        await b.close();
+        process.exit(failedSkip ? 1 : 0);
+    }
+
+    if (CHOICE === 3 && !NOREF) {
         await waitWizard();
         await shot('tc-07-resume-wizard');
         const v = await attr('gg-toolchange-reason', 'data-variant');

@@ -135,6 +135,15 @@ describe('GGSender: reference text', () => {
             expect(t.overruleLabel).toBeNull();
         });
 
+        it('resume, choice 1 with the tool measured first: says why, and does not say that Z zero was set by hand', () => {
+            const t = text({ resumed: true, count: 1, resumeMode: 'reference-same' }, { ...valid, status: 'none', reference: null, lastProbe: null });
+            expect(t.headline).toBe('gSender measures T20 as the reference.');
+            expect(t.why).toBe('You selected this: the same tool is in the spindle, and Z zero did not change.');
+            expect(t.zero).toEqual({ effect: 'unchanged', label: 'Z zero does not change' });
+            expect(t.warning).toBe(false);
+            expect(t.overruleLabel).toBeNull();
+        });
+
         it('resume, choice 3: this tool as the new reference, Z zero not changed', () => {
             const t = text({ resumed: true, count: 1, resumeMode: 'reference' }, stale);
             expect(t.headline).toBe('gSender measures T20 as the new reference.');

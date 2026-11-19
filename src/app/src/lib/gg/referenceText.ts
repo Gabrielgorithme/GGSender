@@ -160,6 +160,15 @@ export const decisionText = (
                 overruleLabel: null,
             };
         }
+        if (decision.reason === 'resume-same-reference') {
+            return {
+                headline: `gSender measures ${t} as the reference.`,
+                why: 'You selected this: the same tool is in the spindle, and Z zero did not change.',
+                zero: unchanged,
+                warning: false,
+                overruleLabel: null,
+            };
+        }
         return {
             headline: 'gSender measures the tool in the spindle as the reference. You do not fit a tool.',
             why: 'First tool change of the job.',

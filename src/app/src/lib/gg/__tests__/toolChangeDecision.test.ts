@@ -87,6 +87,12 @@ describe('GGSender: tool change decision (Fixed Tool Sensor)', () => {
             });
         });
 
+        it('choice 1 with the tool measured first: the same measurement, its own reason, whatever the reference', () => {
+            (['valid', 'stale', 'none'] as const).forEach((status) => {
+                expect(resume('reference-same', status)).toEqual({ variant: 'reference', reason: 'resume-same-reference', overrule: null });
+            });
+        });
+
         it('choice 2 with a valid reference: against the reference', () => {
             expect(resume('measure', 'valid')).toEqual({ variant: 'measure', reason: 'resume-measure', overrule: null });
             expect(resume('measure-old', 'valid')).toEqual({ variant: 'measure', reason: 'resume-measure', overrule: null });

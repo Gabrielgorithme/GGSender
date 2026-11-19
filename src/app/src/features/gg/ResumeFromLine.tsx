@@ -23,7 +23,16 @@ import { toolSummary } from 'app/lib/gg/toolSpec';
 import { getLoadedTool, normalizeTool, setLoadedTool } from 'app/lib/gg/loadedTool';
 import { useReference } from 'app/lib/gg/probeStore';
 import { clock, referenceId, toolName } from 'app/lib/gg/referenceText';
-import { ReferenceSource, ToolChoice, defaultChoice, sourcesFor, toolModeFor } from 'app/lib/gg/resumeToolChoice';
+import {
+    DEFAULT_SAME_TOOL_PROBE,
+    ReferenceSource,
+    SameToolProbe,
+    ToolChoice,
+    defaultChoice,
+    sameToolAsks,
+    sourcesFor,
+    toolModeFor,
+} from 'app/lib/gg/resumeToolChoice';
 import { spinupSeconds } from 'app/lib/gg/holdSettings';
 import { getToolChangeSafeZ } from 'app/lib/gg/toolChangeMoves';
 import {
@@ -39,6 +48,7 @@ import {
 import { getStopRecord, stopFor, stopPosition } from 'app/lib/gg/stopPoint';
 import store from 'app/store';
 import { useJobInfo } from './JobOperations';
+import { getCurrentPick } from './pickTopics';
 import { ReferenceStatus } from './ReferenceStatus';
 
 export const RESUME_SETTING_KEY = 'workspace.gg.resumeFromLine';
@@ -87,6 +97,7 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
     const [query, setQuery] = useState('');
     const [toolChoice, setToolChoice] = useState<ToolChoice | null>(null); // null: the default
     const [source, setSource] = useState<ReferenceSource | null>(null);
+    const [sameToolProbe, setSameToolProbe] = useState<SameToolProbe>(DEFAULT_SAME_TOOL_PROBE);
     const reference = useReference();
     const [rapidDownTo, setRapidDownTo] = useState('');
     const [plungeFeed, setPlungeFeed] = useState('');
@@ -97,16 +108,30 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
         [open, content, fileName, idx.total],
     );
 
-    // on opening: start from the stop point, ask the server for the tool sensor reference
+    // the line selected in the 3D view when the dialog opens (0-based), or null
+    const selectedLine = useMemo(() => {
+        const pick = open ? getCurrentPick() : null;
+        return pick && pick.line >= 0 && pick.line < idx.lines.length ? pick.line : null;
+    }, [open, idx]);
+    /** What goes in the line field for a file line: its N number, or L + line. */
+    const queryFor = (line: number) => {
+        const raw = idx.lines[line];
+        return usesN && nWordOf(raw) ? (nWordOf(raw) as string) : `L${line + 1}`;
+    };
+
+    // on opening: start from the stop point (without one: from the line
+    // selected in the 3D view), ask the server for the tool sensor reference
     useEffect(() => {
         if (!open) return undefined;
         setToolChoice(null);
         setSource(null);
+        setSameToolProbe(DEFAULT_SAME_TOOL_PROBE);
         setRapidDownTo('');
         setPlungeFeed('');
         if (suggestion) {
-            const raw = idx.lines[suggestion.line];
-            setQuery(usesN && nWordOf(raw) ? (nWordOf(raw) as string) : `L${suggestion.line + 1}`);
+            setQuery(queryFor(suggestion.line));
+        } else if (selectedLine !== null) {
+            setQuery(queryFor(selectedLine));
         }
         const onError = (message: string) => toast.error(`Resume refused: ${message}`, { position: 'bottom-right' });
         controller.addListener('gg:resume:error', onError);
@@ -136,8 +161,11 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
     const lineTool = kept ? kept.state.tool ?? kept.state.nextTool : null;
     const choice = toolChoice ?? defaultChoice(reference.status, loaded, normalizeTool(lineTool));
     const sources = sourcesFor(reference.status);
-    const toolMode = toolModeFor(choice, sources.includes(source as ReferenceSource) ? source : null, reference.status);
-    const measuring = choice === 2 || choice === 3;
+    const toolMode = toolModeFor(choice, sources.includes(source as ReferenceSource) ? source : null, reference.status, sameToolProbe);
+    // choice 1 with no correct reference: measure the tool first, or not
+    const asksSameTool = choice === 1 && sameToolAsks(reference.status);
+    // the entry lines have a tool change (it starts the measurement)
+    const measuring = choice === 2 || choice === 3 || toolMode === 'reference-same';
 
     const plan: ResumePlan | null = useMemo(() => {
         if (!kept || !measuring || !resolved || resolved.line === null) return kept;
@@ -163,7 +191,7 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
 
     const resume = () => {
         if (!plan || !plan.ok || toolMode === null) return;
-        if (toolMode === 'keep' && normalizeTool(lineTool) !== null && normalizeTool(lineTool) !== loaded) {
+        if (choice === 1 && normalizeTool(lineTool) !== null && normalizeTool(lineTool) !== loaded) {
             // choice 1 says that the line's tool is in the spindle
             setLoadedTool(lineTool);
         }
@@ -202,13 +230,21 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                         <button
                             type="button"
                             className="rounded border border-blue-400 px-2 py-1 text-sm text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-white/5"
-                            onClick={() => {
-                                const raw = idx.lines[suggestion.line];
-                                setQuery(usesN && nWordOf(raw) ? (nWordOf(raw) as string) : `L${suggestion.line + 1}`);
-                            }}
+                            onClick={() => setQuery(queryFor(suggestion.line))}
                             data-testid="gg-resume-where-stopped"
                         >
                             Where it stopped
+                        </button>
+                    )}
+                    {selectedLine !== null && (
+                        <button
+                            type="button"
+                            className="rounded border border-pink-400 px-2 py-1 text-sm text-pink-700 hover:bg-pink-50 dark:text-pink-300 dark:hover:bg-white/5"
+                            onClick={() => setQuery(queryFor(selectedLine))}
+                            title="The line that you selected in the 3D view"
+                            data-testid="gg-resume-selected-line"
+                        >
+                            Selected line ({nWordOf(idx.lines[selectedLine]) ?? `line ${selectedLine + 1}`})
                         </button>
                     )}
                     {info && info.operations.length > 0 && (
@@ -218,8 +254,7 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                             onChange={(e) => {
                                 const op = info.operations[Number(e.target.value)];
                                 if (op?.firstMotionLine !== null && op?.firstMotionLine !== undefined) {
-                                    const raw = idx.lines[op.firstMotionLine];
-                                    setQuery(usesN && nWordOf(raw) ? (nWordOf(raw) as string) : `L${op.firstMotionLine + 1}`);
+                                    setQuery(queryFor(op.firstMotionLine));
                                 }
                             }}
                             data-testid="gg-resume-operation"
@@ -300,7 +335,8 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                                 <span>
                                     <b>1. Same tool. Z zero did not change.</b>
                                     <span className="block text-xs text-gray-600 dark:text-gray-300">
-                                        {LineT} is in the spindle. gSender measures nothing.
+                                        {LineT} is in the spindle.
+                                        {reference.status === 'valid' && ' gSender measures nothing. The reference stays correct.'}
                                         {loaded !== normalizeTool(lineTool) && lineTool !== null && (
                                             <span className="text-amber-700 dark:text-amber-400">
                                                 {' '}
@@ -308,16 +344,51 @@ export const ResumeDialog = ({ open, onClose }: { open: boolean; onClose: () => 
                                                 spindle.
                                             </span>
                                         )}
-                                        {choice === 1 && reference.status === 'none' && (
-                                            <span>
+                                        {reference.status === 'none' && ' gSender has no reference.'}
+                                        {reference.status === 'stale' && (
+                                            <span className="text-amber-700 dark:text-amber-400">
                                                 {' '}
-                                                There is no reference now. Option 3 also measures this tool as the reference, and does
-                                                not change Z zero.
+                                                gSender saw a change of Z zero at {staleTime}. The reference is not correct now.
                                             </span>
                                         )}
                                     </span>
                                 </span>
                             </label>
+                            {asksSameTool && (
+                                <div
+                                    className="ml-6 flex flex-col gap-1 rounded border border-sky-300 bg-sky-50 px-2 py-1.5 text-sm dark:border-sky-800 dark:bg-sky-950/30"
+                                    data-testid="gg-resume-same-tool"
+                                >
+                                    <label className="flex items-start gap-2">
+                                        <input
+                                            type="radio"
+                                            className="mt-1"
+                                            checked={sameToolProbe === 'measure'}
+                                            onChange={() => setSameToolProbe('measure')}
+                                            data-testid="gg-resume-same-tool-measure"
+                                        />
+                                        <span>
+                                            <b>Measure {lineT} first.</b> gSender measures it on the tool sensor before the job
+                                            continues. It becomes the reference. Z zero does not change. If this tool breaks later,
+                                            gSender can measure the new tool against the reference.
+                                        </span>
+                                    </label>
+                                    <label className="flex items-start gap-2">
+                                        <input
+                                            type="radio"
+                                            className="mt-1"
+                                            checked={sameToolProbe === 'skip'}
+                                            onChange={() => setSameToolProbe('skip')}
+                                            data-testid="gg-resume-same-tool-skip"
+                                        />
+                                        <span>
+                                            <b>Do not measure.</b> The job continues at once. At the next tool change, gSender first
+                                            measures the tool in the spindle. If this tool breaks before that, you must set Z zero by
+                                            hand.
+                                        </span>
+                                    </label>
+                                </div>
+                            )}
                             <label className="flex items-start gap-2 text-sm">
                                 <input
                                     type="radio"

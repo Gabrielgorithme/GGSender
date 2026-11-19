@@ -1319,6 +1319,78 @@ describe('GGSender: job streaming against a simulated board', () => {
         }
     });
 
+    /** As after a lost connection: gSender connected again, the file loaded, no reference. */
+    const loadAfterReconnection = async (controller) => {
+        controller.command('gg:probe:loaded', '5');
+        const gcode = twoTools();
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'two.nc' }, gcode, {}, (err) => (err ? reject(err) : resolve()));
+        });
+        expect(probeState(controller).status).toBe('none');
+        return gcode;
+    };
+
+    it('after a reconnection (no reference), same tool, choice 1 with the tool measured first: a reference again, Z zero not changed, the next tool against it', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            const gcode = await loadAfterReconnection(controller);
+            const plane = board.zeroPlane();
+            const wco = board.wcoZ;
+            const g10Before = board.g10.length;
+
+            const plan = resumeAt(controller, board, gcode, 'N60', 'reference-same');
+            expect(plan.preamble).toContain('T5 M6');
+            const ctx = await nextToolChange(board, 1);
+            expect(ctx).toMatchObject({ count: 1, tool: 'T5', ggResume: { resumed: true, mode: 'reference-same' } });
+            expect(ctx.ggReference.status).toBe('none');
+            expect(decide(ctx)).toEqual({ variant: 'reference', reason: 'resume-same-reference', overrule: null });
+            expect(decide(ctx, false).variant).toBe('reference'); // with the setting off too
+            await runWizard(controller, board, 'reference', { target: 'T5' });
+
+            // only measured: nothing wrote the work offset
+            expect(await waitFor(() => probeState(controller).status === 'valid', 10000)).toBe(true);
+            expect(board.g10.length).toBe(g10Before);
+            expect(board.wcoZ).toBe(wco);
+            expect(probeState(controller).reference.tool).toBe('5');
+
+            // the program's tool change: T7 against that reference, no "first tool"
+            const next = await nextToolChange(board, 2);
+            expect(next).toMatchObject({ count: 2, tool: 'T7', ggResume: { resumed: true, mode: null } });
+            expect(decide(next)).toEqual({ variant: 'measure', reason: 'valid', overrule: 'full' });
+            await runWizard(controller, board, 'measure', { target: 'T7', newLength: 22 });
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+            expect(board.zeroPlane()).toBeCloseTo(plane, 3);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('after a reconnection (no reference), same tool, choice 1 without the measurement: the next tool change measures the tool in the spindle first, then the new one', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            const gcode = await loadAfterReconnection(controller);
+            const plane = board.zeroPlane();
+            const g10Before = board.g10.length;
+
+            const plan = resumeAt(controller, board, gcode, 'N60', 'keep');
+            expect(plan.preamble.some((l) => /M6/.test(l))).toBe(false);
+            // the job cuts with no reference; the first tool change is the program's
+            const ctx = await nextToolChange(board, 1);
+            expect(ctx).toMatchObject({ count: 1, tool: 'T7', ggResume: { resumed: true, mode: null } });
+            expect(ctx.ggReference.status).toBe('none');
+            expect(board.g10.length).toBe(g10Before);
+            // not "first tool" (which would not ask for T7), not against a reference that does not exist
+            expect(decide(ctx)).toEqual({ variant: 'full', reason: 'none', overrule: null });
+            await runWizard(controller, board, 'full', { target: 'T7', newLength: 22 });
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+            expect(probeState(controller).status).toBe('valid');
+            // T7 cuts at the same Z zero
+            expect(board.zeroPlane()).toBeCloseTo(plane, 3);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
     it('resume keeping the tool, then the program\'s tool change: marked as a resumed job, so never "first tool"; stale after a pendant zero', async () => {
         const { board, controller } = await startSensor();
         try {

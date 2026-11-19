@@ -10,6 +10,7 @@ import { LOADED_TOOL_KEY } from 'app/lib/gg/loadedTool';
 import { LAST_STOP_KEY } from 'app/lib/gg/stopPoint';
 import { getLoadedTool } from 'app/lib/gg/loadedTool';
 import { setReference } from 'app/lib/gg/probeStore';
+import { publishPick } from '../pickTopics';
 
 const mockCommands: any[][] = [];
 const mockListeners: Record<string, Function[]> = {};
@@ -104,6 +105,7 @@ describe('GGSender: Resume From dialog', () => {
         store.set(LAST_STOP_KEY, null);
         store.set('workspace.toolChange.safeZ', -0.1);
         store.set('workspace.gg.resumeSpinupSeconds', 5);
+        publishPick(null);
         act(() => setJobInfo(analyzeJob(PROGRAM), 'job.nc'));
         reference(VALID);
     });
@@ -225,15 +227,70 @@ describe('GGSender: Resume From dialog', () => {
         expect(started()[0].toolMode).toBe('full');
     });
 
-    it('no reference (after a reconnection), same tool: 1 by default, with the hint that 3 measures it now', () => {
+    it('no reference (after a reconnection), same tool: 1 by default, and the tool is measured as the reference first', () => {
         reference(NONE);
         renderButton();
         open();
         type('N26');
         expect(screen.getByTestId('gg-resume-tool-keep')).toBeChecked();
-        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('There is no reference now. Option 3 also measures this tool as the reference, and does not change Z zero.');
+        const box = screen.getByTestId('gg-resume-same-tool');
+        expect(screen.getByTestId('gg-resume-same-tool-measure')).toBeChecked();
+        expect(box).toHaveTextContent('Measure T45 first. gSender measures it on the tool sensor before the job continues. It becomes the reference. Z zero does not change.');
+        expect(box).toHaveTextContent('If this tool breaks later, gSender can measure the new tool against the reference.');
+        // the statement of choice 1 stays true: nothing says that Z zero was set by hand
+        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('T45 is in the spindle. gSender has no reference.');
+        // the measurement starts with the tool change line
+        expect(screen.getByTestId('gg-resume-preamble')).toHaveTextContent('T45 M6');
         fireEvent.click(startButton());
-        expect(started()[0].toolMode).toBe('keep');
+        expect(started()[0]).toMatchObject({ toolMode: 'reference-same', measureTool: true });
+    });
+
+    it('no reference, same tool, "Do not measure": the job continues at once, as in 0.7.1', () => {
+        reference(NONE);
+        renderButton();
+        open();
+        type('N26');
+        fireEvent.click(screen.getByTestId('gg-resume-same-tool-skip'));
+        expect(screen.getByTestId('gg-resume-same-tool')).toHaveTextContent(
+            'Do not measure. The job continues at once. At the next tool change, gSender first measures the tool in the spindle. If this tool breaks before that, you must set Z zero by hand.',
+        );
+        expect(screen.getByTestId('gg-resume-preamble')).not.toHaveTextContent('M6');
+        fireEvent.click(startButton());
+        expect(started()[0]).toMatchObject({ toolMode: 'keep', measureTool: false });
+    });
+
+    it('a correct reference, same tool: no second question, nothing is measured', () => {
+        renderButton();
+        open();
+        type('N26');
+        expect(screen.getByTestId('gg-resume-tool-keep')).toBeChecked();
+        expect(screen.queryByTestId('gg-resume-same-tool')).toBeNull();
+        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('T45 is in the spindle. gSender measures nothing. The reference stays correct.');
+        expect(screen.getByTestId('gg-resume-preamble')).not.toHaveTextContent('M6');
+    });
+
+    it('choice 1 after gSender saw a change of Z zero: says so, and offers the same measurement', () => {
+        reference(STALE);
+        renderButton();
+        open();
+        type('N26');
+        fireEvent.click(screen.getByTestId('gg-resume-tool-keep'));
+        expect(screen.getByTestId('gg-resume-dialog')).toHaveTextContent('gSender saw a change of Z zero at 14:40. The reference is not correct now.');
+        expect(screen.getByTestId('gg-resume-same-tool-measure')).toBeChecked();
+        fireEvent.click(startButton());
+        expect(started()[0].toolMode).toBe('reference-same');
+    });
+
+    it('the second answer of choice 1 is forgotten when the dialog opens again', () => {
+        reference(NONE);
+        renderButton();
+        open();
+        type('N26');
+        fireEvent.click(screen.getByTestId('gg-resume-same-tool-skip'));
+        fireEvent.click(screen.getByText('Cancel'));
+        open();
+        type('N26');
+        expect(screen.getByTestId('gg-resume-same-tool-measure')).toBeChecked();
     });
 
     it('no reference, another tool recorded: nothing selected, Resume waits; choice 2 can only measure the old tool first', () => {
@@ -254,6 +311,18 @@ describe('GGSender: Resume From dialog', () => {
         fireEvent.click(screen.getByTestId('gg-resume-source-old-tool'));
         fireEvent.click(startButton());
         expect(started()[0].toolMode).toBe('full');
+    });
+
+    it('choice 1 with the tool measured first also records the line\'s tool as loaded', () => {
+        reference(NONE);
+        store.set(LOADED_TOOL_KEY, { tool: '7', since: 1 });
+        renderButton();
+        open();
+        type('N26');
+        fireEvent.click(screen.getByTestId('gg-resume-tool-keep'));
+        fireEvent.click(startButton());
+        expect(started()[0].toolMode).toBe('reference-same');
+        expect(getLoadedTool().tool).toBe('45');
     });
 
     it('choice 1 with another tool recorded: says so, and records the line\'s tool as loaded', () => {
@@ -313,6 +382,40 @@ describe('GGSender: Resume From dialog', () => {
         // a later line is flagged
         type('N27');
         expect(within(screen.getByTestId('gg-resume-issues')).getByText(/after the stop line/)).toBeInTheDocument();
+    });
+
+    it('a line selected in the 3D view is offered; the stop point stays the line the dialog opens on', () => {
+        store.set(LAST_STOP_KEY, { fileName: 'job.nc', total: TOTAL + 1, received: 21, wpos: { x: 20, y: 15, z: -2.25 }, inches: false, at: 1 });
+        publishPick({ line: 21, drew: true, shownLine: 21 }); // N27 G1 X40 Y20
+        renderButton();
+        open();
+        expect(screen.getByTestId('gg-resume-query')).toHaveValue('N26');
+        const button = screen.getByTestId('gg-resume-selected-line');
+        expect(button).toHaveTextContent('Selected line (N27)');
+        fireEvent.click(button);
+        expect(screen.getByTestId('gg-resume-query')).toHaveValue('N27');
+        expect(startButton()).toHaveTextContent('Resume at N27');
+        // and back
+        fireEvent.click(screen.getByTestId('gg-resume-where-stopped'));
+        expect(screen.getByTestId('gg-resume-query')).toHaveValue('N26');
+    });
+
+    it('with no stop point, the dialog opens on the line selected in the 3D view', () => {
+        publishPick({ line: 20, drew: true, shownLine: 20 }); // N26
+        renderButton();
+        open();
+        expect(screen.getByTestId('gg-resume-query')).toHaveValue('N26');
+        expect(screen.getByTestId('gg-resume-selected-line')).toHaveTextContent('Selected line (N26)');
+    });
+
+    it('no line selected in the 3D view: no such button; a line of another file is not offered', () => {
+        renderButton();
+        open();
+        expect(screen.queryByTestId('gg-resume-selected-line')).toBeNull();
+        fireEvent.click(screen.getByText('Cancel'));
+        publishPick({ line: 5000, drew: true, shownLine: 5000 });
+        open();
+        expect(screen.queryByTestId('gg-resume-selected-line')).toBeNull();
     });
 
     it('a stop position far from every move is called out', () => {

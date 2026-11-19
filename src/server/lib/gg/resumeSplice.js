@@ -29,7 +29,10 @@
  * - 'full': the tool in the spindle is measured first as the reference,
  *   then the new tool is fitted and measured;
  * - 'reference': the tool in the spindle is measured as the new reference
- *   and nothing else changes (Z zero was set by hand with it).
+ *   and nothing else changes (Z zero was set by hand with it);
+ * - 'reference-same': the same measurement, asked for another reason: the
+ *   same tool is in the spindle with an unchanged Z zero, and gSender has no
+ *   correct reference (0.7.3).
  * The mode is handed once to the tool change of the entry lines
  * (takeToolMode). A resumed job is marked as such until it stops, so that no
  * tool change in it is taken for "the first tool of a job, already in the
@@ -94,7 +97,7 @@ export const hasToolReference = (sharedContext) => {
     return v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v));
 };
 
-export const TOOL_MODES = ['keep', 'measure', 'measure-old', 'full', 'reference'];
+export const TOOL_MODES = ['keep', 'measure', 'measure-old', 'full', 'reference', 'reference-same'];
 
 /** The tool mode of a plan; a plan from before 0.7.1 only has measureTool. */
 export const toolModeOf = (plan = {}) => {
