@@ -12,6 +12,9 @@ already hit, the change log, the machine checklists, the backlog and an open pro
 - `gg/main` is the current state of the fork and the default branch.
 - For a change, branch from an up-to-date `gg/main` (`gg/<version>`), open a pull request into
   `gg/main`.
+- Merge the pull request yourself once its checks pass: the owner's standing instruction
+  (19 Nov 2026, "merge by default"). The merge publishes the release. Still deliver the `app.asar`
+  and say what was not checked.
 - One session at a time. Before starting, check that no other branch has unmerged work you would
   be building beside instead of on.
 
