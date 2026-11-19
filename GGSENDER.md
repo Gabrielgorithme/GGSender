@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.7.1**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.7.2**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -205,7 +205,12 @@ node scripts/gg/e2e/fake-fluidnc.js 2323 /tmp/fake.log 25 &
 node scripts/gg/e2e/resume.js /tmp/gg-e2e src/app/src/lib/gg/__tests__/fixtures/fusion-one-of-each.nc
 node scripts/gg/e2e/error.js /tmp/gg-e2e scripts/gg/e2e/xz-arc-without-g18.nc
 FAKE_LOG=/tmp/fake.log node scripts/gg/e2e/toolchange.js /tmp/gg-e2e-tc src/app/src/lib/gg/__tests__/fixtures/fusion-one-of-each.nc
+node scripts/gg/e2e/isolate.js /tmp/gg-e2e-iso          # needs the server only, no board
 ```
+
+`isolate.js` (0.7.2) loads `three-operations.nc` (three operations in three places), clicks the
+operations in the list and compares what the 3D view draws, pixel by pixel (Chromium draws WebGL in
+software): which side of the picture goes, what a click finds, that everything comes back.
 
 `toolchange.js` (0.7.1) uses the *Fixed Tool Sensor* strategy and the fake's second port
 (2324, "the pendant": `tool <length>`, `zero [offset]`, `wco <z>`, `state`, one per line, answered
@@ -223,6 +228,63 @@ an I/K arc in G17 with `error:33`. Since 0.7.1 its positions are machine coordin
 time and answers empty lines. It is a stand-in for what the fork depends on, not FluidNC.
 
 ## Change log
+
+### 0.7.2 (on gSender 1.6.4)
+
+**A click on an operation shows only its toolpath.** Asked by the owner: in a file with many
+operations the toolpaths lie over each other, and the move to click cannot be found. A click on an
+operation in the operations list now hides every other toolpath in the 3D view. A click on the
+toolpath then finds only a move of that operation, and the *Previous move* and *Next move* buttons
+of the line card stop at its first and last move. The list shows *The 3D view shows only <name>.*
+with a *Show all* button, also when the list is closed, and the operation has a pink frame. A
+second click on the operation, *Show all*, a click on another operation (which shows that one), a
+line asked for by number that is not in the operation (line card, editor), or another file end it. So
+does turning off the operations list or the setting: nothing stays hidden without a note that says
+so.
+
+- What is shown: the moves of the file lines from the operation's name to the name of the next
+  operation (the last one: to the end of the file). The move that brings the tool to the first
+  position of the operation is part of it; so is its tool change line, which draws nothing.
+- Setting **Click an operation to show only its toolpath** (Config, GGSender; on by default). Off:
+  the click selects the first move of the operation, as before. An operation without a move (notes
+  only) always behaves that way.
+- It only changes what is drawn. Nothing is sent to the controller, the program is not changed, and
+  a job that runs is not affected. It can be used while a job runs: the colours (planned, done)
+  keep following the job, and upstream's *hide processed lines* still hides what was run.
+- How: `ToolpathPicker` hides the line that upstream draws (`workpiece.visible = false`) and adds a
+  second `THREE.Line` beside it that uses the same position and colour buffers with its own draw
+  range (`vertexRangeForLineSpan` in `lib/gg/toolpathPick.ts`). No edit in upstream's
+  `GCodeVisualizer`. At every frame the second line takes the draw range of the hidden one into
+  account (that is how upstream hides processed lines). The second line is added after the
+  toolpath because upstream takes `group.children[0]` for the toolpath. Its geometry gives the
+  shared buffers back before it is disposed, or the dispose would free the toolpath's buffers.
+- Messages: `gg:isolate:request` and `gg:isolate:changed` in `features/gg/pickTopics.ts`.
+
+Tests added: the vertex range of a run of lines (ends on comments and blank lines, ranges that join,
+nothing drawn, bad input); the screen search limited to a part of the vertices; the line span of an
+operation; the picker (same buffers and material, toolpath still the first child, replace, show all,
+clicks and steps limited to the operation, a line outside ends it, upstream's draw range followed, a
+new file, dispose); the list (request sent, note, second click, *Show all*, another operation, list
+closed, the 3D view ending it by itself, the list or the setting turned off, operation without a
+move).
+
+The built app was driven in Chromium (`scripts/gg/e2e/isolate.js`, 18 checks passed): each of
+three operations alone removes the other two from the picture and nothing else, a click where a
+hidden operation runs selects nothing, a click on the shown one selects one of its lines, the steps
+stop in the operation, and after the second click, *Show all* and a new file the picture is the
+same as before to the pixel. A job was also run against the fake board with one operation shown
+alone, with and without *hide processed lines*: no error, the colours followed the job, and the
+processed part was hidden.
+
+Not checked: nothing run on Windows or on the machine. Chromium drew with software WebGL, not with
+the graphics card of the owner's PC. Not tried: rotary files, laser files, the lightweight mode
+(there the toolpath has no line data and the click does nothing), a file of the size the owner
+runs (131 000 lines; the click does one binary search and no copy of the buffers, so no slowdown
+is expected, but it was not measured in the app).
+
+Also seen, not changed: in that short job the list said *all done* while the fake board was still
+cutting. The list follows the lines the controller acknowledged, which run ahead of the cut by
+what the planner holds (16 lines there, a few lines on a long file).
 
 ### 0.7.1 (on gSender 1.6.4)
 
@@ -813,6 +875,28 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
+## To check on the machine after installing 0.7.2
+
+Nothing here moves the machine. It can be checked with no machine connected.
+
+1. Title bar shows `GGSender 0.7.2 (gSender 1.6.4)`.
+2. Load a file with several operations. In the operations list (top left of the 3D view) click an
+   operation. Only its toolpath stays in the 3D view. The list shows *The 3D view shows only
+   <name>.* and *Show all*, and the operation has a pink frame.
+3. Click a move of that toolpath: the line card shows a line of that operation. Click where another
+   operation was: nothing is selected. *Previous move* and *Next move* stop at the first and last
+   move of the operation.
+4. Click another operation: that one is shown alone. Click it again: all toolpaths are back. Do the
+   same with *Show all*.
+5. Close the list (click its title) while an operation is shown alone: the note and *Show all*
+   stay.
+6. With the 131 000-line file: the click must answer at once, and rotating the view must be as
+   smooth as before. If it is slow, say so.
+7. During a job (air cut): show the running operation alone. The colours must keep following the
+   cut. *Show all* brings the rest back.
+8. Config, GGSender, *Click an operation to show only its toolpath* off: the click selects the first
+   move of the operation, as in 0.7.1.
+
 ## To check on the machine after installing 0.7.1
 
 Air cuts (Z zero set well above the work, or no stock), hand near the e-stop. Checks 3 to 8 move Z
@@ -1005,8 +1089,13 @@ Do these with the spindle off or as an air cut first.
 - Editable tool-change sequences (text templates instead of code).
 - Air-cut mode (temporary Z offset).
 - Publish each build as a release with `app.asar` attached; optional Windows installer built by CI.
-- Operations list: highlight an operation's whole toolpath in the 3D view on hover; start the job
-  from a chosen operation (needs the modal-state rebuild above).
+- Operations list: start the job from a chosen operation (needs the modal-state rebuild above).
+  (0.7.2 shows one operation alone on a click.) Ideas, not asked for: a click on the tool row to
+  show all operations of that tool; move the camera to the operation shown.
+- A link watchdog: no byte from the controller for a few seconds while gSender asks for status
+  (the stall detector of 0.2.0 only fires when the machine reports Idle, and the traffic log does
+  not record the port closing). Offered to the owner after a USB link that went mute mid-job
+  (19 Nov); not asked for yet.
 
 - Ask the owner whether the machine checklists in this file should be rewritten in ASD-STE100 too
   (the user-facing text was; these notes were not).
