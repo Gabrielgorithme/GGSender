@@ -14,8 +14,10 @@ class Machine {
         this.wco = 0;
     }
 
-    report(state = 'Idle') {
-        return `<${state}|MPos:0.000,0.000,-1.000|FS:0,0|WCO:10.000,20.000,${this.wco.toFixed(3)}>`;
+    /** A status report. FluidNC puts the WCO only in every 10th to 30th: withWco false is one of the others. */
+    report(state = 'Idle', withWco = true) {
+        const wco = withWco ? `|WCO:10.000,20.000,${this.wco.toFixed(3)}` : '';
+        return `<${state}|MPos:0.000,0.000,-1.000|FS:0,0${wco}>`;
     }
 
     /** Work Z the tool in the spindle reads on the sensor. */
@@ -51,6 +53,13 @@ const setup = () => {
         clock.t += ms;
         h.onStatus(m.report(), opts);
     };
+    /** Reports without a WCO, as most of FluidNC's are. */
+    const quiet = (n = 1, opts) => {
+        for (let i = 0; i < n; i++) {
+            clock.t += 250;
+            h.onStatus(m.report(opts?.jobRunning ? 'Run' : 'Idle', false), opts);
+        }
+    };
     /** What the wizard does: probe the tool in the spindle as the reference. */
     const probeReference = () => {
         expect(isReferenceLine(REFERENCE_LINE)).toBe(true);
@@ -63,10 +72,11 @@ const setup = () => {
         m.L = L;
         h.onFeederLine(WIZARD_G10);
         m.g10(h.snapshot().reference.value);
+        h.onFeederLine('G0 Z2'); // the next line of the wizard: the G10 got its "ok"
         tick();
         h.onFeederLine('%toolchange_complete');
     };
-    return { clock, changes, h, m, tick, probeReference, measureNewTool };
+    return { clock, changes, h, m, tick, quiet, probeReference, measureNewTool };
 };
 
 describe('GGSender: tool sensor reference', () => {
@@ -238,7 +248,7 @@ describe('GGSender: tool sensor reference', () => {
         expect(h.snapshot().stale.at).toBeGreaterThan(first);
     });
 
-    it('a new tool of the same length: no change of offset, recorded when the wizard ends', () => {
+    it('a new tool of the same length: recorded at the first report with a WCO after the controller accepted the G10', () => {
         const { h, m, tick, probeReference } = setup();
         m.L = 30;
         m.zeroByHand();
@@ -246,16 +256,127 @@ describe('GGSender: tool sensor reference', () => {
         probeReference();
         h.setWizard({ variant: 'measure', target: 'T20' });
         h.onFeederLine(WIZARD_G10);
-        m.g10(h.snapshot().reference.value); // same length: the offset is the same
-        tick();
-        tick();
+        tick(); // no "ok" for the G10 yet: this report can be from before it
         expect(h.snapshot().history.filter((e) => e.kind === 'measured')).toHaveLength(0);
-        h.onFeederLine('%toolchange_complete');
+        m.g10(h.snapshot().reference.value); // same length: the offset is the same
+        h.onFeederLine('G0 Z2'); // the feeder sends a line for each "ok"
+        expect(h.snapshot().history.filter((e) => e.kind === 'measured')).toHaveLength(0);
+        tick();
         const s = h.snapshot();
         expect(s.history[s.history.length - 1]).toMatchObject({ kind: 'measured', tool: '20', deltaZ: 0 });
         expect(s.lastProbe).toMatchObject({ kind: 'measured', tool: '20' });
-        // a change after the wizard has ended is not the wizard's
+        h.onFeederLine('%toolchange_complete');
+        // a change after that is not the wizard's
         m.wco += 2;
+        tick();
+        expect(h.snapshot().status).toBe(REF_STALE);
+    });
+
+    it('the owner\'s log of 19 Nov: FluidNC shows the new WCO seconds later, when the wizard has ended and the program runs. It is the wizard\'s, the reference stays correct', () => {
+        const { h, m, tick, quiet, probeReference } = setup();
+        m.L = 30;
+        m.zeroByHand();
+        tick();
+        probeReference();
+        const plane = m.zeroPlane();
+        h.setWizard({ variant: 'measure', target: 'T20' });
+        m.L = 28.238; // T20 is 1.762 mm shorter
+        h.onFeederLine(WIZARD_G10);
+        m.g10(h.snapshot().reference.value);
+        h.onFeederLine('G0 Z2');
+        quiet(6); // 16:45:57 to 16:46:03: reports, none with a WCO
+        h.onFeederLine('G4 P0.5');
+        h.onFeederLine('%toolchange_complete');
+        // 0.7.3 closed the G10 here as "no change"
+        expect(h.snapshot().history.filter((e) => e.kind === 'measured')).toHaveLength(0);
+        expect(h.snapshot().status).toBe(REF_VALID);
+        quiet(2, { jobRunning: true }); // the program is sent again
+        tick(250, { jobRunning: true }); // 16:46:04: the report with the new WCO
+        const s = h.snapshot();
+        expect(s.status).toBe(REF_VALID);
+        expect(s.stale).toBeNull();
+        expect(s.history.some((e) => e.kind === 'program')).toBe(false);
+        expect(s.history[s.history.length - 1]).toMatchObject({ kind: 'measured', tool: '20', deltaZ: 1.762 });
+        expect(m.zeroPlane()).toBeCloseTo(plane, 6);
+        // and it is watched from that value on: a real change is seen
+        m.wco -= 0.5;
+        tick(250, { jobRunning: true });
+        expect(h.snapshot().status).toBe(REF_STALE);
+        expect(h.snapshot().stale.kind).toBe('program');
+    });
+
+    it('the new WCO in a report before the "ok" of the G10 is taken at once', () => {
+        const { h, m, tick, probeReference } = setup();
+        m.L = 30;
+        m.zeroByHand();
+        tick();
+        probeReference();
+        h.setWizard({ variant: 'measure', target: 'T7' });
+        m.L = 22;
+        h.onFeederLine(WIZARD_G10);
+        m.g10(h.snapshot().reference.value);
+        tick();
+        const s = h.snapshot();
+        expect(s.status).toBe(REF_VALID);
+        expect(s.history[s.history.length - 1]).toMatchObject({ kind: 'measured', tool: '7', deltaZ: 8 });
+    });
+
+    it('the G10 stays open through any number of reports without a WCO, and is not closed by the clock', () => {
+        const { h, m, tick, quiet, clock, probeReference } = setup();
+        m.L = 30;
+        m.zeroByHand();
+        tick();
+        probeReference();
+        h.setWizard({ variant: 'measure', target: 'T7' });
+        m.L = 22;
+        h.onFeederLine(WIZARD_G10);
+        m.g10(h.snapshot().reference.value);
+        h.onFeederLine('G0 Z2');
+        h.onFeederLine('%toolchange_complete');
+        quiet(100, { jobRunning: true }); // 25 s
+        expect(h.snapshot().history.filter((e) => e.kind === 'measured')).toHaveLength(0);
+        clock.t += 20000;
+        tick(250, { jobRunning: true });
+        expect(h.snapshot().status).toBe(REF_VALID);
+        expect(h.snapshot().history.pop()).toMatchObject({ kind: 'measured', tool: '7', deltaZ: 8 });
+    });
+
+    it('a controller that reports no WCO: the G10 is closed when the wizard ends', () => {
+        const { h, clock } = setup();
+        const bare = () => {
+            clock.t += 250;
+            h.onStatus('<Idle|MPos:0.000,0.000,-1.000|FS:0,0>');
+        };
+        bare();
+        h.onFeederLine(REFERENCE_LINE);
+        h.onReferenceSet('-15.000');
+        h.setWizard({ variant: 'measure', target: 'T7' });
+        h.onFeederLine(WIZARD_G10);
+        h.onFeederLine('G0 Z2');
+        bare();
+        expect(h.snapshot().history.filter((e) => e.kind === 'measured')).toHaveLength(0);
+        h.onFeederLine('%toolchange_complete');
+        const s = h.snapshot();
+        expect(s.watching).toBe(false);
+        expect(s.status).toBe(REF_VALID);
+        expect(s.history.pop()).toMatchObject({ kind: 'measured', tool: '7', deltaZ: 0 });
+    });
+
+    it('a controller that stops reporting its WCO: the G10 is closed after a minute, so that it cannot take a later change', () => {
+        const { h, m, tick, quiet, probeReference } = setup();
+        m.L = 30;
+        m.zeroByHand();
+        tick();
+        probeReference();
+        h.setWizard({ variant: 'measure', target: 'T7' });
+        h.onFeederLine(WIZARD_G10);
+        h.onFeederLine('G0 Z2');
+        h.onFeederLine('%toolchange_complete');
+        quiet(239); // just under a minute
+        expect(h.snapshot().history.filter((e) => e.kind === 'measured')).toHaveLength(0);
+        quiet(3);
+        expect(h.snapshot().history.pop()).toMatchObject({ kind: 'measured', tool: '7', deltaZ: 0 });
+        m.wco += 3;
         tick();
         expect(h.snapshot().status).toBe(REF_STALE);
     });
@@ -266,7 +387,8 @@ describe('GGSender: tool sensor reference', () => {
         probeReference();
         h.setWizard({ variant: 'measure', target: 'T20' });
         h.onFeederLine(WIZARD_G10);
-        tick(9000); // no change within the window: settled as "same length"
+        h.onFeederLine('G0 Z2'); // the G10 got its "ok"
+        tick(); // a report with the WCO, unchanged: closed as "same length"
         expect(h.snapshot().lastProbe).toMatchObject({ kind: 'measured', tool: '20' });
         m.wco += 3;
         tick();

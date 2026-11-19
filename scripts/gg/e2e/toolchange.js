@@ -173,7 +173,8 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
         const hand = await pendant('zero 0.12');
         handPlane = hand.zeroPlane;
         console.log('after the pendant zero:', JSON.stringify(hand));
-        check('Z zero from the pendant: the chip turns to "not correct" within 2 s', await waitChip('stale', 2000));
+        // FluidNC shows a new offset at its next report with a WCO: up to 2.5 s when idle, 7.5 s after a move
+        check('Z zero from the pendant: the chip turns to "not correct" within 8 s', await waitChip('stale', 8500));
         await p.locator('[data-testid=gg-loaded-tool]').click();
         await p.waitForTimeout(400);
         await shot('tc-05-chip-stale');
@@ -292,14 +293,14 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
     const open = await pendant('state');
     await pendant(`wco ${open.wcoZ + 2}`);
     const turned = await p
-        .waitForFunction(() => document.querySelector('[data-testid=gg-toolchange-reason]')?.getAttribute('data-variant') === 'full', null, { timeout: 3000 })
+        .waitForFunction(() => document.querySelector('[data-testid=gg-toolchange-reason]')?.getAttribute('data-variant') === 'full', null, { timeout: 8500 })
         .then(() => true, () => false);
-    check('pendant zero with the window open: it switches to "the tool in the spindle first" within 3 s', turned);
+    check('pendant zero with the window open: it switches to "the tool in the spindle first" within 8 s', turned);
     await shot('tc-08b-window-follows');
     console.log('window after the pendant zero:', await text('gg-toolchange-reason-headline'), '|', await text('gg-toolchange-reason-why'));
     await pendant(`wco ${open.wcoZ}`);
     const back = await p
-        .waitForFunction(() => document.querySelector('[data-testid=gg-toolchange-reason]')?.getAttribute('data-variant') === 'measure', null, { timeout: 3000 })
+        .waitForFunction(() => document.querySelector('[data-testid=gg-toolchange-reason]')?.getAttribute('data-variant') === 'measure', null, { timeout: 8500 })
         .then(() => true, () => false);
     check('offset put back: the window is back to "against the reference"', back);
 
@@ -324,13 +325,20 @@ const near = (a, b) => Math.abs(a - b) < 0.002;
     const g10After = fs.readFileSync(process.env.FAKE_LOG || '/tmp/fake.log', 'utf8').split('\n').filter((l) => /"ev":"wco"/.test(l) && /G10/.test(l)).length;
     check('exactly one G10 after the resume (for T2)', g10After - g10Before === 1, `${g10After - g10Before}`);
     check('chip: reference valid', await waitChip('valid', 8000));
+    // the controller shows the new offset up to 7.5 s after the wizard's G10,
+    // when the job runs again: it must not be taken for a change by the program
+    await p.waitForTimeout(9000);
+    check('9 s after the tool change, the job running: the reference is still correct', (await chipState()) === 'valid');
     await p.locator('[data-testid=gg-loaded-tool]').click();
     await p.waitForTimeout(400);
     await shot('tc-10-chip-history');
-    console.log('chip panel:', await text('gg-reference-panel'));
+    const panel = (await text('gg-reference-panel')) || '';
+    console.log('chip panel:', panel);
+    check('the history has the measurement of T2, and no change by the program', /T2 measured against the reference/.test(panel) && !/The program changed/.test(panel));
     await p.mouse.click(800, 600);
 
-    await p.locator('button', { hasText: /^Stop$/ }).first().click();
+    // the job can have ended by now (the 9 s above)
+    await p.locator('button', { hasText: /^Stop$/ }).first().click({ timeout: 3000 }).catch(() => {});
     await p.waitForTimeout(1500);
     if (errors.length) console.log('PAGE ERRORS', errors.slice(0, 5).join('\n'));
     check('no page errors', errors.length === 0);

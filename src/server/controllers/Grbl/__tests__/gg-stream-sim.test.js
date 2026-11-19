@@ -329,7 +329,11 @@ class HomingBoard extends FakeBoard {
 
 /*
  * A board with a tool sensor and a work offset, like FluidNC: status reports
- * carry MPos, and WCO after each change of it and every 10th report. A probe
+ * carry MPos, and the WCO only now and then. FluidNC 4.1 (the owner's, seen
+ * in its traffic log) puts it in every 10th report when idle and every 30th
+ * when moving, and NOT right after a change; here every 4th and 8th, to keep
+ * the tests short (wcoEvery). holdWco keeps it out of all reports, to place
+ * the report with the new WCO exactly where a test needs it. A probe
  * (G38.2) stops with the tool tip on the sensor: machine Z = S + L for a tool
  * of length L. G10 L20 P0 Z<v> writes the offset so that the present position
  * reads v. The part's surface is at machine Z = P + L (zeroByHand puts the Z
@@ -346,6 +350,8 @@ class SensorBoard extends FakeBoard {
     distance = 'G90';
     events = [];
     wcoCounter = 0;
+    wcoEvery = { idle: 4, run: 8 };
+    holdWco = false;
     active = false; // a line other than a "$" query is being handled
     g10 = []; // G10 lines as received
 
@@ -357,18 +363,18 @@ class SensorBoard extends FakeBoard {
         // a "$" query does not make the machine run
         const state = this.active || this.queue.some((l) => !l.startsWith('$')) ? 'Run' : 'Idle';
         let wco = '';
-        if (this.wcoCounter <= 0) {
+        if (this.wcoCounter <= 0 && !this.holdWco) {
             wco = `|WCO:0.000,0.000,${this.wcoZ.toFixed(3)}`;
-            this.wcoCounter = 10;
-        } else {
+            this.wcoCounter = (state === 'Run' ? this.wcoEvery.run : this.wcoEvery.idle) - 1;
+        } else if (this.wcoCounter > 0) {
             this.wcoCounter--;
         }
         return `<${state}|MPos:1.000,2.000,${this.mz.toFixed(3)}|FS:0,0${wco}>`;
     }
 
     setWco(z) {
+        // no report is forced: the change shows when the counter comes round
         this.wcoZ = z;
-        this.wcoCounter = 0; // FluidNC reports WCO right after a change
     }
 
     /** From the pendant: Z zero with the tool tip on a surface (the part's by default). */
@@ -1155,6 +1161,8 @@ describe('GGSender: job streaming against a simulated board', () => {
             expect(board.g10[0]).toMatch(/^G10 L20 P0 Z-?[\d.]+$/);
             expect(Number(/Z(-?[\d.]+)/.exec(board.g10[0])[1])).toBeCloseTo(board.S - board.P, 3);
             expect(board.zeroPlane()).toBeCloseTo(plane, 3);
+            // the report that shows the new offset can come after the job has ended
+            expect(await waitFor(() => probeState(controller).lastProbe?.kind === 'measured', 5000)).toBe(true);
             const state = probeState(controller);
             expect(state.status).toBe('valid');
             expect(state.lastProbe).toMatchObject({ kind: 'measured', tool: '7' });
@@ -1202,6 +1210,58 @@ describe('GGSender: job streaming against a simulated board', () => {
             controller.command('gcode', ['G90 G0 Z5', 'G10 L20 P0 Z0']);
             expect(await waitFor(() => probeState(controller).status === 'stale', 3000)).toBe(true);
             expect(probeState(controller).history.pop().kind).toBe('zero');
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('the owner\'s log of 19 Nov: the controller shows the new offset only after the wizard has ended and the job has gone on. The reference stays correct', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            controller.command('gg:probe:loaded', '5');
+            const plane = board.zeroPlane();
+            await new Promise((resolve, reject) => {
+                controller.command('gcode:load', { name: 'two.nc' }, twoTools(), {}, (err) => (err ? reject(err) : resolve()));
+            });
+            controller.command('gcode:start');
+            await nextToolChange(board, 1);
+            await runWizard(controller, board, 'reference', { target: 'T5' });
+            const second = await nextToolChange(board, 2);
+            expect(second.ggReference.status).toBe('valid');
+
+            // from here no report carries the WCO, as between two of FluidNC's 30 reports
+            board.holdWco = true;
+            const wcoBefore = board.wcoZ;
+            await runWizard(controller, board, 'measure', { target: 'T7', newLength: 41.25 });
+            // the wizard has ended, the program was sent to its end
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+            expect(board.g10).toHaveLength(1);
+            expect(board.wcoZ).not.toBe(wcoBefore); // the controller has the new offset
+            await sleep(1200); // several reports, none with the WCO
+            let state = probeState(controller);
+            // gSender has not seen it yet: nothing is recorded, and nothing is called wrong
+            expect(state.status).toBe('valid');
+            expect(state.history.map((h) => h.kind)).toEqual(['zero', 'reference']);
+
+            // the report with the new WCO comes now (0.7.3: "the program changed the work Z offset")
+            board.holdWco = false;
+            expect(await waitFor(() => probeState(controller).lastProbe?.kind === 'measured', 5000)).toBe(true);
+            state = probeState(controller);
+            expect(state.status).toBe('valid');
+            expect(state.stale).toBeNull();
+            expect(state.history.map((h) => h.kind)).toEqual(['zero', 'reference', 'measured']);
+            expect(state.history[2]).toMatchObject({ tool: '7' });
+            expect(state.history[2].deltaZ).toBeCloseTo(-11.25, 3);
+            expect(board.zeroPlane()).toBeCloseTo(plane, 3);
+            // the next tool change would use the reference, with no warning
+            expect(decideFixedSensor({ count: 3, reference: state, resumed: false, resumeMode: null, guard: true })).toEqual({
+                variant: 'measure',
+                reason: 'valid',
+                overrule: 'full',
+            });
+            // a Z zero by hand after that is still seen
+            board.zeroByHand(board.P - 1);
+            expect(await waitFor(() => probeState(controller).status === 'stale', 5000)).toBe(true);
         } finally {
             await stop(controller, board);
         }

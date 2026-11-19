@@ -20,11 +20,14 @@
  * from a pendant, with a touch plate, by another work coordinate system)
  * moves P and leaves the number behind.
  *
- * How that is seen. FluidNC and Grbl 1.1 report the work coordinate offset
- * ("WCO:", machine minus work) after every change of it and every 10 to 30
- * reports; gSender asks for a report about 4 times a second, so a change
- * made anywhere, the pendant included, is seen within about a second while
- * connected. The state is a comparison, not a count of events:
+ * How that is seen. The controller puts the work coordinate offset ("WCO:",
+ * machine minus work) in some of its status reports. Grbl 1.1 does so right
+ * after a change and every 10 to 30 reports. FluidNC 4.1 (the owner's
+ * machine, seen in its traffic log) does so ONLY every 10th report when idle
+ * and every 30th when moving, not after a change. gSender asks for a report
+ * about 4 times a second, so a change made anywhere, the pendant included,
+ * is seen 0 to 2.5 s later when idle and up to 7.5 s later when moving. The
+ * state is a comparison, not a count of events:
  *
  * - valid: the WCO Z now is the WCO Z the reference goes with (as it was at
  *   the probe, or as the wizard's own G10 for the last new tool left it).
@@ -33,8 +36,15 @@
  * - none: no reference since gSender connected (it is not kept across a
  *   reconnection, by the owner's choice).
  *
- * The wizard's own G10 passes through gSender's feeder just before the WCO
- * changes, so that change is told apart and becomes the new expected value.
+ * The wizard's own G10 passes through gSender's feeder, so its change of the
+ * WCO is told apart and becomes the new expected value. Because the report
+ * that shows it can come seconds later, after the wizard has ended and the
+ * program runs again, the G10 is not matched by time: it stays open until the
+ * first report with a WCO that comes after the controller accepted the G10.
+ * That report gives the offset the reference now goes with, changed or not.
+ * (0.7.1 to 0.7.3 closed it at the end of the wizard or after 8 s; a later
+ * report was then taken for a change made by the program, and a correct
+ * reference was called not correct.)
  *
  * It only observes; nothing here sends anything to the controller.
  */
@@ -44,7 +54,9 @@ export const REF_STALE = 'stale';
 export const REF_NONE = 'none';
 
 export const MAX_HISTORY = 30;
-const EXPECT_MS = 8000; // the wizard's G10 shows in a report within this time
+// the wizard's G10 was accepted and no report carried a WCO for this long:
+// this controller has stopped reporting it, close the G10 as "no change"
+const EXPECT_GIVE_UP_MS = 60000;
 const MERGE_MS = 3000; // a WCS change and its WCO change belong together
 const SAME = 0.0015; // mm: reports carry 3 decimals
 
@@ -82,7 +94,9 @@ export class ProbeHistory {
         this.wcs = null;
         this.loadedTool = null;
         this.wizard = null; // { variant: 'reference' | 'full' | 'measure', target }
-        this.expect = null; // { until, tool }: the wizard's G10 for a new tool
+        // the wizard's G10 for a new tool, until a report shows its result:
+        // { tool, ackedAt }: ackedAt is null until the controller accepted the line
+        this.expect = null;
     }
 
     status() {
@@ -145,17 +159,26 @@ export class ProbeHistory {
     onFeederLine(raw) {
         const line = String(raw || '').trim();
         if (WIZARD_G10_RE.test(line)) {
-            this.expect = { until: this.now() + EXPECT_MS, tool: this.wizard ? this.wizard.target : null };
+            this.expect = { tool: this.wizard ? this.wizard.target : null, ackedAt: null };
             return;
         }
+        // the feeder sends one line for each "ok": a line after the G10
+        // means that the controller accepted the G10
+        if (this.expect && this.expect.ackedAt === null) {
+            this.expect.ackedAt = this.now();
+        }
         if (WIZARD_DONE_RE.test(line)) {
-            this.settleExpected();
+            // the result of the G10 can still be on its way: only a
+            // controller that reports no WCO at all is closed here
+            if (this.wcoZ === null) {
+                this.settleExpected();
+            }
             this.wizard = null;
         }
     }
 
     /**
-     * The wizard's G10 was sent and no change of WCO followed: the new tool
+     * The wizard's G10 was accepted and the WCO is as before: the new tool
      * has the length of the old one, or the offset was already the right one.
      * After that G10 the reference goes with the WCO as it is now.
      */
@@ -244,11 +267,11 @@ export class ProbeHistory {
      * @param jobRunning  program lines are being sent (the change is the program's)
      */
     onStatus(raw, { inches = false, jobRunning = false } = {}) {
-        if (this.expect && this.now() > this.expect.until) {
-            this.settleExpected();
-        }
         const m = WCO_RE.exec(String(raw || ''));
         if (!m) {
+            if (this.expect && this.expect.ackedAt !== null && this.now() - this.expect.ackedAt > EXPECT_GIVE_UP_MS) {
+                this.settleExpected();
+            }
             return;
         }
         let z = Number(m[3]);
@@ -267,6 +290,12 @@ export class ProbeHistory {
         }
         const delta = z - this.wcoZ;
         if (Math.abs(delta) < SAME) {
+            // the first WCO after the controller accepted the wizard's G10,
+            // and it is the same: that is the result of the G10. (A report
+            // before the "ok" can be from before the G10: it says nothing.)
+            if (this.expect && this.expect.ackedAt !== null) {
+                this.settleExpected();
+            }
             return;
         }
         const before = this.status();
@@ -274,6 +303,8 @@ export class ProbeHistory {
         // WCO is machine minus work: the work Z of a fixed point moves by -delta
         const deltaZ = round3(-delta);
         if (this.expect) {
+            // the result of the wizard's G10, however late the report comes
+            // and whatever runs by then
             const { tool } = this.expect;
             this.expect = null;
             this.measured(tool, deltaZ, before === REF_STALE);

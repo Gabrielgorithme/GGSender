@@ -9,7 +9,8 @@
 // Everything is logged to the log file as JSON lines.
 //
 // Work offset and tool sensor (0.7.1): positions are machine coordinates;
-// status reports carry WCO after each change of it and every 10th report, as
+// status reports carry WCO every 10th report when idle and every 30th when
+// busy, and NOT right after a change (WCO_ON_CHANGE=1 for that, as Grbl 1.1): as
 // FluidNC does. G10 L20 P0 Z<v> writes the Z offset (from any source). G38.2
 // ends with the tool tip on the sensor: machine Z = SENSOR + tool length.
 // G4 P<s> dwells for real, after the planner has emptied.
@@ -34,7 +35,9 @@ const SURFACE = -55;
 const machine = { toolLength: 30, wcoZ: 0, wcoCounter: 0, pos: { x: 0, y: 0, z: 0 }, planned: { x: 0, y: 0, z: 0 } };
 const setWco = (z, why) => {
     machine.wcoZ = z;
-    machine.wcoCounter = 0; // reported in the next status report
+    // FluidNC 4.1 does not force a report: the change shows when the counter
+    // comes round, up to 2.5 s later when idle and 7.5 s when busy
+    if (process.env.WCO_ON_CHANGE === '1') machine.wcoCounter = 0;
     log({ ev: 'wco', z, why });
 };
 const machineState = () => ({
@@ -67,7 +70,8 @@ net.createServer((sock) => {
         let wco = '';
         if (machine.wcoCounter <= 0) {
             wco = `|WCO:0.000,0.000,${machine.wcoZ.toFixed(3)}`;
-            machine.wcoCounter = 10;
+            // FluidNC 4.1: 10 reports when idle, 30 when in a cycle, hold or jog
+            machine.wcoCounter = (st === 'Idle' ? 10 : 30) - 1;
         } else {
             machine.wcoCounter--;
         }
