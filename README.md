@@ -25,7 +25,7 @@ With a fixed tool sensor, gSender keeps one number: where a tool reads on the se
 is correct only while Z zero stays where it was. GGSender tracks it.
 
 - It records **which tool was probed, when, and whether the reference is still correct**.
-- It sees a **Z zero set by hand**, from the pendant too, within about a second.
+- It sees a **Z zero set by hand**, from the pendant too, within a few seconds.
 - At each tool change it **decides from that state, says why, and lets you overrule it**.
 - The window shows **a drawing of the tool** to fit, from the tool table that Fusion writes.
 - A resumed job never takes the "first tool" shortcut that skips the new tool.

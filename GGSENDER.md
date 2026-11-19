@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.7.3**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.7.4**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -89,6 +89,14 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
 
 ## Traps
 
+- **FluidNC 4.1 does not report its work offset right after a change.** Grbl 1.1 does. FluidNC
+  puts `WCO:` in every 10th status report when idle and every 30th when moving, and that is all.
+  With gSender's 4 reports a second, a change (the tool change's own `G10`, a Z zero from the
+  pendant) shows 0 to 2.5 s later when idle and up to 7.5 s later when moving or just after a
+  move (the count of 30 is kept until it runs out). Seen in the owner's
+  traffic log of 19 Nov: 6.4 s between `G10 L20 P0 Z45.482` and the first report with the new
+  offset. Nothing may assume that the report after a line shows the result of that line. The
+  simulated board and the fake FluidNC report the offset this way since 0.7.4 (see 0.7.4).
 - **The archive integrity check is off.** `gSender.exe` embeds a hash of the archive index, but the
   Electron fuse that enforces it (`EnableEmbeddedAsarIntegrityValidation`) is disabled in the
   official 1.6.2 and 1.6.4 builds. A repacked archive loads. If a future official build turns the
@@ -250,6 +258,49 @@ time and answers empty lines. It is a stand-in for what the fork depends on, not
 
 ## Change log
 
+### 0.7.4 (on gSender 1.6.4)
+
+**A correct reference was called not correct after a tool change.** Seen on the machine with 0.7.3,
+twice in one evening: at a tool change the window said *The program changed the work Z offset at
+16:46, after the last probe* and proposed to measure the tool in the spindle again. Nothing had
+changed Z zero. The owner selected *Use the old reference* both times, which was the right answer,
+and the parts were good.
+
+- Cause: the tracker took it that FluidNC reports the work offset right after a change (Grbl 1.1
+  does; the handoff for 0.7.1 said that FluidNC does, from its source). The owner's FluidNC 4.1.1
+  reports it only every 10th to 30th status report. The tool change's own `G10` at 16:45:57.8
+  showed in a report at 16:46:04.3, 6.4 s later. By then the wizard had ended (16:46:03.7) and the
+  program was running. 0.7.1 to 0.7.3 closed the wizard's `G10` at the end of the wizard, or after
+  8 s, as "no change of offset", so the report that came after was read as a change made by the
+  program. It went right when the owner pressed the last *Run* later than the report (four of the
+  six tool changes of that log).
+- It failed to the safe side: a reference called not correct only makes the next tool change
+  measure the tool in the spindle again. No wrong Z was written.
+- Fix (`server/lib/gg/probeHistory.js`): the wizard's `G10` is no longer matched by time. It stays
+  open until the first report with a `WCO:` that comes after the controller accepted the `G10`
+  (the feeder sends one line per `ok`, so the next feeder line marks that). That report gives the
+  offset the reference goes with, changed or not, whatever runs by then. A report before the `ok`
+  only counts when it shows a change. A controller that reports no offset at all is closed at the
+  end of the wizard as before; one that stops reporting it, after a minute.
+- Left as it is: between the wizard's `G10` and that report (at most 7.5 s), a Z zero set by hand
+  would be taken for the wizard's. And a Z zero set by hand shows in gSender up to 2.5 s later
+  (idle) or 7.5 s later (after a move), not "within a second" as the notes of 0.7.1 said: after a
+  Z zero from the pendant, wait until the chip or the window shows it before you press *Run*.
+- Also in that log, not changed: the second program started with a tool that gSender had no record
+  of (the job before was stopped during a tool change), so the window said *T?*.
+
+Tests added: the tracker with reports that carry no offset (the owner's log step by step; the
+offset in a report before the `ok`; any number of reports without it; a controller with no offset
+reports; one that stops). The simulated board (`SensorBoard`) and the fake FluidNC now report the
+offset as FluidNC does, every n-th report and not on a change; the tests of 0.7.1 to 0.7.3 passed
+only because both reported it at once. A simulated-board run holds the offset back until the wizard
+has ended and the program was sent: with the tracker of 0.7.3 it fails as on the machine. The
+end-to-end script checks the chip 9 s after a tool change, with the job running.
+
+Not checked: nothing run on Windows or on the machine. The cadence of the reports (10 idle, 30
+moving) is read from one traffic log of FluidNC 4.1.1, where every delay fits it; it was not read
+from the firmware's source.
+
 ### 0.7.3 (on gSender 1.6.4)
 
 **Resume From, option 1 with no reference: the tool is measured first.** Seen on the machine with
@@ -366,8 +417,9 @@ set by making it read that number (`G10 L20 P0 Z[TOOL_OFFSET]`). So it stays cor
 as Z zero is where it was, and setting Z zero again makes it wrong without anything showing it.
 
 - **Tracking** (`server/lib/gg/probeHistory.js`, hooks in `GrblController.js`). FluidNC reports its
-  work offset (`WCO:`) after every change and every 10 to 30 reports; gSender asks 4 times a second,
-  so a Z zero set anywhere, the pendant included, is seen within about a second while connected.
+  work offset (`WCO:`) every 10 to 30 reports (and not right after a change: corrected in 0.7.4,
+  see Traps); gSender asks 4 times a second, so a Z zero set anywhere, the pendant included, is
+  seen within 2.5 s when the machine is idle and 7.5 s when it moves.
   The state is a comparison, not a count of events: **valid** when the work Z offset is the one the
   reference goes with (as probed, or as the wizard's own `G10` for the last tool left it), **stale**
   when it is another, **none** when no tool was probed since gSender connected. Putting the old
@@ -939,6 +991,19 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
+## To check on the machine after installing 0.7.4
+
+1. Title bar shows `GGSender 0.7.4 (gSender 1.6.4)`.
+2. Run a job with at least three tools as an air cut. At each tool change after the first, press
+   the last *Run* of the window as soon as it is offered (that is the case that went wrong). Each
+   window must say *gSender measures T.. against the reference* with *Z zero did not change after
+   the last probe*, and no window may say *The program changed the work Z offset*.
+3. About ten seconds after a tool change, click the `T` chip: green tick, and the history has *T..
+   measured against the reference* for that tool.
+4. Set Z zero from the FluidDial with the machine idle: the chip turns amber within about three
+   seconds, or up to eight when the machine moved just before (not at once: FluidNC shows the new
+   offset only in some of its reports). Set it back: green again.
+
 ## To check on the machine after installing 0.7.3
 
 Air cuts, hand near the e-stop. Checks 2 and 3 move Z to the tool sensor.
@@ -988,7 +1053,7 @@ on the strength of the reference: read the tool change window before each Run.
 2. Connect. The `T` chip in the top bar has a grey barred circle: no reference. Click it: *No
    reference. gSender did not probe a tool after it connected.*
 3. Run a job to its first tool change and through it. The chip shows a green tick; the panel names
-   the tool and the time. Now set Z zero **from the FluidDial**: within about two seconds the chip
+   the tool and the time. Now set Z zero **from the FluidDial**: within three to eight seconds the chip
    shows the amber triangle and the panel says *Z zero changed at ..., after the last probe*. (If it
    does not, FluidNC is not reporting the offset change: stop here and send the traffic log.) Set
    Z zero back to the same value: green again.
@@ -1007,7 +1072,7 @@ on the strength of the reference: read the tool change window before each Run.
    Stop a job, *Resume From* with choice 1, let it reach the next tool change: no first-tool prompt,
    the window asks to fit the new tool.
 8. At a tool change of a job (not the first), with the window open and before pressing Run, set
-   Z zero from the pendant: within about two seconds the window turns amber by itself and says
+   Z zero from the pendant: within three to eight seconds the window turns amber by itself and says
    *gSender first measures the tool in the spindle as the new reference*, with the button *Use the
    old reference*; pressing it shows *Z zero goes back to ...*. Go back to the default, then Stop.
 9. Reconnect: the chip is grey again. *Resume From* with another tool recorded than the line's:
