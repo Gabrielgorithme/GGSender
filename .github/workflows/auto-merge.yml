@@ -11,6 +11,8 @@ permissions:
 
 jobs:
     sync-master-to-dev:
+        # GGSender: upstream's job, for upstream's repository only (it needs their secrets)
+        if: github.repository == 'Sienci-Labs/gsender'
         runs-on: ubuntu-latest
         steps:
             - name: Checkout repository

@@ -1,0 +1,105 @@
+# GGSender (not part of upstream gSender).
+#
+# For every pull request into gg/main: run the tests, build, and package the
+# app.asar that replaces the one of an installed official gSender. The archive
+# is kept with the run as an artifact, so a change can be tried on the machine
+# before it is merged.
+#
+# When the fork version (src/app/src/gg-build.json) changes on gg/main, the
+# same archive is published as a release, with the notes of that version from
+# GGSENDER.md. A version that already has a release is not published again.
+name: GGSender
+
+on:
+  pull_request:
+    branches: [gg/main]
+  push:
+    branches: [gg/main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gg-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test, build and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Fork version
+        id: version
+        run: echo "version=$(node -p "require('./src/app/src/gg-build.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts
+
+      - name: Tests
+        run: node_modules/.bin/jest --config jest.config.js
+
+      - name: Type check (files of the fork)
+        run: scripts/gg/typecheck.sh
+
+      - name: Build
+        run: scripts/gg/build.sh
+
+      - name: Official gSender app.asar
+        run: |
+          command -v 7z >/dev/null || sudo apt-get install -y p7zip-full
+          scripts/gg/fetch-stock-asar.sh "$RUNNER_TEMP/stock/app.asar"
+
+      - name: Package app.asar
+        run: |
+          mkdir -p release
+          node scripts/gg/pack-asar.mjs --stock "$RUNNER_TEMP/stock/app.asar" --out release/app.asar
+          (cd release && sha256sum app.asar > app.asar.sha256 && cat app.asar.sha256)
+          scripts/gg/release-notes.sh "${{ steps.version.outputs.version }}" > release/notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GGSender-${{ steps.version.outputs.version }}-app.asar
+          path: release/
+          retention-days: 30
+          compression-level: 0
+
+  release:
+    name: Publish the release
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/gg/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: GGSender-${{ needs.build.outputs.version }}-app.asar
+          path: release
+
+      - name: Publish, unless this version has a release
+        run: |
+          TAG="gg-v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists. Nothing to publish."
+            exit 0
+          fi
+          gh release create "$TAG" release/app.asar release/app.asar.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "GGSender ${VERSION} (on gSender 1.6.4)" \
+            --notes-file release/notes.md
