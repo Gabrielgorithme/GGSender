@@ -27,8 +27,8 @@ installation; nothing else changes.
 
 To go back: delete \`app.asar\` and rename \`app.asar.stock\` to \`app.asar\`.
 
-This is a personal build for one FluidNC machine. It is not supported by Sienci Labs: do not
-report problems with it to them. It moves a machine: read the notes, and make air cuts first.
+This is not an official gSender build. It is not supported by Sienci Labs: do not report problems
+with it to them. It moves a machine: read the notes, and make air cuts first.
 
 Everything the fork adds to gSender, with pictures: the [README](https://github.com/${GITHUB_REPOSITORY:-Gabrielgorithme/GGSender}#readme).
 All versions, the machine checklists and the traps: [GGSENDER.md](https://github.com/${GITHUB_REPOSITORY:-Gabrielgorithme/GGSender}/blob/gg/main/GGSENDER.md).

@@ -1,7 +1,10 @@
 # GGSender
 
-A personal fork of [gSender](https://github.com/Sienci-Labs/gsender) (GPLv3) for a FluidNC machine
-driven through gSender's Grbl controller with a fixed tool length sensor.
+A fork of [gSender](https://github.com/Sienci-Labs/gsender) (GPLv3) for Grbl and FluidNC machines.
+It is developed and proven on one machine: FluidNC driven through gSender's Grbl controller, with a
+fixed tool length sensor and programs from Fusion. `README.md` is written for visitors and puts
+first what is useful on any such machine; changes that widen it (other post processors, grblHAL,
+other platforms) are welcome.
 
 This file is the entry point for whoever edits this fork next, human or AI. It covers what was
 changed and why, how to build and install, the traps, and what is still to do. `CLAUDE.md` is the
@@ -60,6 +63,9 @@ out of the installer (it starts at the first `7z` signature, `37 7A BC AF 27 1C`
 
 - `README.md` is the front page for visitors: what the fork adds, with pictures (`examples/gg/`), and
   how to install it. It replaces upstream's README. Keep it short; the detail is in this file.
+  The owner's wish (19 Nov 2026): it speaks to anyone who can use the fork, not about one machine.
+  Order: what works on every Grbl or FluidNC machine, then the fixed tool sensor, then Fusion, with
+  an open invitation to add other post processors. State what a thing needs, not whose it is.
 - `examples/gg/demo-plate.nc` is the program in the first pictures: five operations, three tools, made
   to lie over each other. It was written by a script, not by Fusion, in the form Fusion's post
   writes.
