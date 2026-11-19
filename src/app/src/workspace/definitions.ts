@@ -60,6 +60,7 @@ export interface Workspace {
         preflightOnLoad: string;
         preflightHidden: string;
         operationsPanel: boolean;
+        isolateOperation: boolean;
         pauseMode: string;
         holdStopsSpindle: boolean;
         resumeSpinupSeconds: number;

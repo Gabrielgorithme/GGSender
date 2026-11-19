@@ -349,6 +349,14 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             'GGSender: the 3D view shows a list of the operations of the file, in groups for each tool. The list shows the operation that runs, the operations that are done and the operations to come. It also shows the time to the next tool change. Fusion writes the operation names as comments. Off, or for a file without these comments: the upstream tool timeline.',
                     },
                     {
+                        label: 'Click an operation to show only its toolpath',
+                        key: 'workspace.gg.isolateOperation',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: a click on an operation in the operations list shows only the toolpath of that operation in the 3D view. The other toolpaths are hidden. A click on the toolpath then selects only a move of that operation. Click the operation again, or click "Show all", to see all toolpaths. Off: a click on an operation selects its first move.',
+                    },
+                    {
                         label: 'Tool drawing at tool change',
                         key: 'workspace.gg.toolDrawing',
                         type: 'boolean',

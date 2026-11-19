@@ -80,6 +80,7 @@ const defaultState: State = {
             preflightOnLoad: 'When there are warnings',
             preflightHidden: '',
             operationsPanel: true,
+            isolateOperation: true,
             pauseMode: 'Immediate feed hold',
             holdStopsSpindle: false,
             resumeSpinupSeconds: 5,

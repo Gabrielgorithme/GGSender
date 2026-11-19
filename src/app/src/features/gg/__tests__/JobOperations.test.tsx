@@ -7,8 +7,8 @@ import pubsub from 'pubsub-js';
 import store from 'app/store';
 import { analyzeJob } from 'app/lib/gg/jobOperations';
 import { setJobInfo } from 'app/lib/gg/jobInfoStore';
-import { JobOperations, OPERATIONS_PANEL_KEY } from '../JobOperations';
-import { PICK_REQUEST } from '../pickTopics';
+import { ISOLATE_OPERATION_KEY, JobOperations, OPERATIONS_PANEL_KEY } from '../JobOperations';
+import { ISOLATE_REQUEST, PICK_REQUEST, publishIsolation } from '../pickTopics';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -99,17 +99,161 @@ describe('GGSender: operations list', () => {
         expect(screen.queryByTestId('gg-ops-next-change')).toBeNull();
     });
 
-    it('a click on an operation shows its first move in the 3D view', async () => {
-        const requests: any[] = [];
-        const token = pubsub.subscribe(PICK_REQUEST, (_m: string, d: any) => requests.push(d));
-        renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
-        await load(PROGRAM);
-        fireEvent.click(screen.getByText('Contour1'));
-        await act(async () => {
-            await tick();
+    describe('a click on an operation', () => {
+        let isolateRequests: any[];
+        let pickRequests: any[];
+        let tokens: string[];
+        beforeEach(() => {
+            isolateRequests = [];
+            pickRequests = [];
+            // stands for the 3D view: it shows what is asked, and says so
+            tokens = [
+                pubsub.subscribe(ISOLATE_REQUEST, (_m: string, d: any) => {
+                    isolateRequests.push(d);
+                    publishIsolation(d.clear ? null : d);
+                }),
+                pubsub.subscribe(PICK_REQUEST, (_m: string, d: any) => pickRequests.push(d)),
+            ];
         });
-        pubsub.unsubscribe(token);
-        expect(requests).toEqual([{ line: 11 }]); // 0-based file line of "G1 X10"
+        afterEach(() => {
+            tokens.forEach((t) => pubsub.unsubscribe(t));
+            act(() => publishIsolation(null));
+            store.set(ISOLATE_OPERATION_KEY, true);
+        });
+        // the button of an operation (the note above the list can show the same name)
+        const op = (name: string) => within(screen.getByTestId('gg-ops-list')).getByText(name);
+        const settle = () =>
+            act(async () => {
+                await tick();
+            });
+
+        it('shows only that operation in the 3D view, and the panel says so', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            expect(screen.queryByTestId('gg-ops-isolated')).toBeNull();
+            fireEvent.click(op('Contour1'));
+            await settle();
+            // file lines: "(Contour1)" is line 10, "(Chamfer1)" is line 14
+            expect(isolateRequests).toEqual([{ key: 'op:1', label: 'Contour1', firstLine: 10, endLine: 14 }]);
+            expect(pickRequests).toEqual([]);
+            expect(screen.getByTestId('gg-ops-isolated')).toHaveTextContent('The 3D view shows only Contour1.');
+            expect(screen.getByTestId('gg-op-1').dataset.isolated).toBe('true');
+            expect(screen.getByTestId('gg-op-0').dataset.isolated).toBeUndefined();
+            expect(op('Contour1')).toHaveAttribute('aria-pressed', 'true');
+            expect(op('Contour1').title).toContain('Click to show all operations in the 3D view.');
+            expect(op('Adaptive1').title).toContain('Click to show only this operation in the 3D view.');
+        });
+
+        it('the last operation runs to the end of the file', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            fireEvent.click(op('Chamfer1'));
+            await settle();
+            expect(isolateRequests).toEqual([{ key: 'op:2', label: 'Chamfer1', firstLine: 14, endLine: null }]);
+        });
+
+        it('a second click, or "Show all", shows all operations again', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            fireEvent.click(op('Contour1'));
+            await settle();
+            fireEvent.click(op('Contour1'));
+            await settle();
+            expect(isolateRequests[1]).toEqual({ clear: true });
+            expect(screen.queryByTestId('gg-ops-isolated')).toBeNull();
+            expect(screen.getByTestId('gg-op-1').dataset.isolated).toBeUndefined();
+
+            fireEvent.click(op('Adaptive1'));
+            await settle();
+            expect(screen.getByTestId('gg-ops-isolated')).toHaveTextContent('Adaptive1');
+            fireEvent.click(screen.getByTestId('gg-ops-show-all'));
+            await settle();
+            expect(isolateRequests[isolateRequests.length - 1]).toEqual({ clear: true });
+            expect(screen.queryByTestId('gg-ops-isolated')).toBeNull();
+        });
+
+        it('a click on another operation shows that one', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            fireEvent.click(op('Contour1'));
+            await settle();
+            fireEvent.click(op('Adaptive1'));
+            await settle();
+            expect(isolateRequests[1]).toEqual({ key: 'op:0', label: 'Adaptive1', firstLine: 5, endLine: 10 });
+            expect(screen.getByTestId('gg-op-0').dataset.isolated).toBe('true');
+            expect(screen.getByTestId('gg-op-1').dataset.isolated).toBeUndefined();
+        });
+
+        it('the panel says that a part is hidden also when the list is closed', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            fireEvent.click(op('Contour1'));
+            await settle();
+            fireEvent.click(screen.getByTestId('gg-ops-toggle'));
+            expect(screen.queryByTestId('gg-ops-list')).toBeNull();
+            expect(screen.getByTestId('gg-ops-isolated')).toHaveTextContent('Contour1');
+            expect(screen.getByTestId('gg-ops-show-all')).toBeInTheDocument();
+        });
+
+        it('when the 3D view shows everything again by itself, the panel follows', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            fireEvent.click(op('Contour1'));
+            await settle();
+            act(() => publishIsolation(null)); // a new file, a line outside of the operation
+            expect(screen.queryByTestId('gg-ops-isolated')).toBeNull();
+            expect(screen.getByTestId('gg-op-1').dataset.isolated).toBeUndefined();
+        });
+
+        it('the list or the setting turned off: everything is shown again', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            fireEvent.click(op('Contour1'));
+            await settle();
+            await act(async () => {
+                store.set(ISOLATE_OPERATION_KEY, false);
+                await tick();
+            });
+            expect(isolateRequests[isolateRequests.length - 1]).toEqual({ clear: true });
+            expect(screen.queryByTestId('gg-ops-isolated')).toBeNull();
+
+            await act(async () => {
+                store.set(ISOLATE_OPERATION_KEY, true);
+                await tick();
+            });
+            fireEvent.click(op('Contour1'));
+            await settle();
+            expect(screen.getByTestId('gg-ops-isolated')).toBeInTheDocument();
+            const before = isolateRequests.length;
+            await act(async () => {
+                store.set(OPERATIONS_PANEL_KEY, false); // the list is replaced by the upstream timeline
+                await tick();
+            });
+            expect(screen.queryByTestId('gg-ops-panel')).toBeNull();
+            expect(isolateRequests.slice(before)).toEqual([{ clear: true }]);
+            store.set(OPERATIONS_PANEL_KEY, true);
+        });
+
+        it('setting off: the click selects the first move of the operation', async () => {
+            store.set(ISOLATE_OPERATION_KEY, false);
+            renderPanel(reduxState({ sent: 0, received: 0, total: 16 }, 'idle'));
+            await load(PROGRAM);
+            fireEvent.click(op('Contour1'));
+            await settle();
+            expect(pickRequests).toEqual([{ line: 11 }]); // 0-based file line of "G1 X10"
+            expect(isolateRequests).toEqual([]);
+            expect(op('Contour1').title).toContain('Click to see its first move in the 3D view.');
+            expect(op('Contour1')).not.toHaveAttribute('aria-pressed');
+        });
+
+        it('an operation without a move has no toolpath: the click selects its line', async () => {
+            renderPanel(reduxState({ sent: 0, received: 0, total: 3 }, 'idle'));
+            await load(['(job)', 'G21', '', '(Remove the clamps)', 'M0', 'M30'].join('\n'));
+            fireEvent.click(op('Remove the clamps'));
+            await settle();
+            expect(isolateRequests).toEqual([]);
+            expect(pickRequests).toEqual([{ line: 3 }]);
+        });
     });
 
     it('collapses to one line showing the running operation', async () => {

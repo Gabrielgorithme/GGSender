@@ -8,6 +8,12 @@
  *
  * A click is a press and release without moving more than a few pixels, so
  * rotating, panning and zooming the view are unaffected.
+ *
+ * It can also show one part of the toolpath alone (an operation): the
+ * toolpath that upstream draws is hidden and a second line draws only that
+ * part, from the same vertex and colour buffers. So the colours of a running
+ * job (done, planned) stay correct, and nothing of upstream's drawing is
+ * changed. While a part is shown alone, a click finds only moves of that part.
  */
 import * as THREE from 'three';
 import pubsub from 'pubsub-js';
@@ -18,8 +24,14 @@ import {
     nearestSegmentOnScreen,
     stepDrawnLine,
     vertexRangeForLine,
+    vertexRangeForLineSpan,
 } from 'app/lib/gg/toolpathPick';
-import { PICK_REQUEST, publishPick } from './pickTopics';
+import {
+    ISOLATE_REQUEST,
+    PICK_REQUEST,
+    publishIsolation,
+    publishPick,
+} from './pickTopics';
 
 const CLICK_MOVE_TOLERANCE = 4; // px
 const CLICK_MAX_DURATION = 700; // ms
@@ -42,8 +54,13 @@ export default class ToolpathPicker {
         this.overlay = null;
         this.line = null;
         this.down = null;
+        // { key, label, firstLine, endLine, start, end, object, toolpath }
+        this.isolation = null;
         this.token = pubsub.subscribe(PICK_REQUEST, (_msg, payload) =>
             this.handleRequest(payload || {}),
+        );
+        this.isolateToken = pubsub.subscribe(ISOLATE_REQUEST, (_msg, payload) =>
+            this.handleIsolate(payload || {}),
         );
     }
 
@@ -68,12 +85,16 @@ export default class ToolpathPicker {
     dispose() {
         this.detach();
         this.removeOverlay();
+        this.removeIsolation();
         pubsub.unsubscribe(this.token);
+        pubsub.unsubscribe(this.isolateToken);
     }
 
     /** New toolpath: { frames, frameLines, vertices } (typed arrays). */
     setData(data) {
         this.removeOverlay();
+        this.removeIsolation();
+        publishIsolation(null);
         this.line = null;
         const ok =
             data &&
@@ -133,6 +154,9 @@ export default class ToolpathPicker {
             clientX - rect.left,
             clientY - rect.top,
             PICK_DISTANCE,
+            // only what is shown can be clicked
+            this.isolation ? this.isolation.end : undefined,
+            this.isolation ? this.isolation.start : 0,
         );
         if (!hit) {
             this.select(null);
@@ -150,16 +174,143 @@ export default class ToolpathPicker {
             return;
         }
         if (step === 1 || step === -1) {
-            const from = this.line ?? (step > 0 ? -1 : Number.MAX_SAFE_INTEGER);
+            const iso = this.isolation;
+            let from = this.line;
+            if (from === null || from === undefined) {
+                // no line yet: the first or the last move of what is shown
+                if (step > 0) {
+                    from = iso ? iso.firstLine - 1 : -1;
+                } else {
+                    from = iso && iso.endLine !== null ? iso.endLine : Number.MAX_SAFE_INTEGER;
+                }
+            }
             const next = stepDrawnLine(this.data.frames, this.data.frameLines, from, step);
-            if (next !== null) {
+            // a part shown alone: the steps stop at its first and last move
+            if (next !== null && (!iso || this.inIsolation(next))) {
                 this.select(next);
             }
             return;
         }
         if (Number.isInteger(line) && line >= 0) {
+            // a line asked for by number that is not in the part shown alone:
+            // show everything again, or the highlight would point at nothing
+            if (this.isolation && !this.inIsolation(line)) {
+                this.isolate(null);
+            }
             this.select(line);
         }
+    }
+
+    handleIsolate({ clear, key, label, firstLine, endLine }) {
+        if (clear) {
+            this.isolate(null);
+            return;
+        }
+        this.isolate({ key, label, firstLine, endLine: endLine ?? null });
+    }
+
+    inIsolation(line) {
+        const iso = this.isolation;
+        return Boolean(iso) && line >= iso.firstLine && (iso.endLine === null || line < iso.endLine);
+    }
+
+    /**
+     * Show only the moves of the file lines firstLine to endLine (not
+     * included; null: to the end), or everything again with null.
+     */
+    isolate(request) {
+        this.removeIsolation();
+        const toolpath = this.getToolpath();
+        const range =
+            request && this.data
+                ? vertexRangeForLineSpan(
+                      this.data.frames,
+                      this.data.frameLines,
+                      request.firstLine,
+                      request.endLine,
+                  )
+                : null;
+        if (!range || !toolpath || !toolpath.parent) {
+            publishIsolation(null);
+            this.render();
+            return;
+        }
+
+        // the same buffers as the toolpath, another part of them drawn
+        const geometry = new THREE.BufferGeometry();
+        ['position', 'color'].forEach((name) => {
+            const attribute = toolpath.geometry.getAttribute(name);
+            if (attribute) {
+                geometry.setAttribute(name, attribute);
+            }
+        });
+        const object = new THREE.Line(geometry, toolpath.material);
+        object.name = 'gg-isolated';
+        // the bounding sphere would be that of the whole toolpath: no gain
+        object.frustumCulled = false;
+        // same transform as the toolpath (rotary files rotate their parent)
+        object.matrixAutoUpdate = false;
+        object.matrix.copy(toolpath.matrix);
+        // added after the toolpath: upstream takes its first child for the toolpath
+        toolpath.parent.add(object);
+        toolpath.visible = false;
+
+        this.isolation = {
+            key: String(request.key ?? ''),
+            label: String(request.label ?? ''),
+            firstLine: request.firstLine,
+            endLine: request.endLine,
+            start: range.start,
+            end: range.end,
+            object,
+            toolpath,
+        };
+        // upstream can hide the lines already run by moving the draw range of
+        // the toolpath during a job: follow it at every frame
+        object.onBeforeRender = () => this.syncIsolationRange();
+        this.syncIsolationRange();
+
+        // a highlight outside of what is shown would point at nothing
+        if (this.line !== null && this.line !== undefined && !this.inIsolation(this.line)) {
+            this.select(null);
+        }
+        publishIsolation({
+            key: this.isolation.key,
+            label: this.isolation.label,
+            firstLine: request.firstLine,
+            endLine: request.endLine,
+        });
+        this.render();
+    }
+
+    /** Draw the part shown alone, less what upstream hides of the toolpath. */
+    syncIsolationRange() {
+        const iso = this.isolation;
+        if (!iso) {
+            return;
+        }
+        const shown = iso.toolpath.geometry.drawRange || { start: 0, count: Infinity };
+        const shownStart = shown.start || 0;
+        const from = Math.max(iso.start, shownStart);
+        const to = Math.min(iso.end, shownStart + shown.count);
+        iso.object.geometry.setDrawRange(from, Math.max(0, to - from));
+    }
+
+    removeIsolation() {
+        const iso = this.isolation;
+        if (!iso) {
+            return;
+        }
+        this.isolation = null;
+        iso.toolpath.visible = true;
+        if (iso.object.parent) {
+            iso.object.parent.remove(iso.object);
+        }
+        // the buffers and the material belong to the toolpath: let go of them
+        // before the dispose, which would free them
+        const geometry = iso.object.geometry;
+        Object.keys(geometry.attributes).forEach((name) => geometry.deleteAttribute(name));
+        geometry.dispose();
     }
 
     /** Highlight a line (0-based) or clear with null. */

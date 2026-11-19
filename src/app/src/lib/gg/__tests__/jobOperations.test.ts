@@ -1,7 +1,7 @@
 // GGSender: operations and tool table read from the program's comments
 import fs from 'fs';
 import path from 'path';
-import { analyzeJob, findToolSpec, groupOperationNames } from '../jobOperations';
+import { analyzeJob, findToolSpec, groupOperationNames, operationLineSpan } from '../jobOperations';
 
 const fixture = (name: string) => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
 
@@ -231,5 +231,25 @@ describe('GGSender job operations: findToolSpec', () => {
         expect(findToolSpec(info, 6)).toBeNull();
         expect(findToolSpec(info, null)).toBeNull();
         expect(findToolSpec(null, 5)).toBeNull();
+    });
+});
+
+describe('GGSender job operations: operationLineSpan', () => {
+    const program = ['(job)', 'G21', '', '(Adaptive1)', 'T1 M6', 'G0 X0 Y0', 'G1 Z-1 F100', '', '(Contour1)', 'G1 X10', '', '(Chamfer1)', 'T2 M6', 'G0 X5', 'M30'].join('\n');
+    const info = analyzeJob(program);
+
+    it('runs from the name of the operation to the name of the next one', () => {
+        expect(info.operations.map((o) => o.name)).toEqual(['Adaptive1', 'Contour1', 'Chamfer1']);
+        expect(operationLineSpan(info.operations, 0)).toEqual({ firstLine: 3, endLine: 8 });
+        expect(operationLineSpan(info.operations, 1)).toEqual({ firstLine: 8, endLine: 11 });
+    });
+
+    it('the last operation runs to the end of the file', () => {
+        expect(operationLineSpan(info.operations, 2)).toEqual({ firstLine: 11, endLine: null });
+    });
+
+    it('is null for an operation that does not exist', () => {
+        expect(operationLineSpan(info.operations, 3)).toBeNull();
+        expect(operationLineSpan([], 0)).toBeNull();
     });
 });

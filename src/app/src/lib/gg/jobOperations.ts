@@ -364,3 +364,21 @@ export const findToolSpec = (info: JobInfo | null, tool: unknown): ToolSpec | nu
 /** Operations a tool group will run, by name. */
 export const groupOperationNames = (info: JobInfo, group: ToolGroup): string[] =>
     group.operations.map((i) => info.operations[i].name);
+
+/**
+ * The file lines of an operation (0-based): from its first comment to the
+ * line where the next operation starts (endLine, not included; null for the
+ * last operation, which runs to the end of the file). The tool change of the
+ * operation and the move to its first position are inside.
+ */
+export const operationLineSpan = (
+    operations: JobOperation[],
+    index: number,
+): { firstLine: number; endLine: number | null } | null => {
+    const op = operations[index];
+    if (!op) {
+        return null;
+    }
+    const next = operations[index + 1];
+    return { firstLine: op.line, endLine: next ? next.line : null };
+};

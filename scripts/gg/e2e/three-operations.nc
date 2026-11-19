@@ -1,0 +1,39 @@
+(three operations)
+(T1 D=6 CR=0 - ZMIN=-1 - flat end mill)
+(T2 D=3 CR=0 - ZMIN=-1 - flat end mill)
+G90 G94 G17
+G21
+
+(Square left)
+T1 M6
+S10000 M3
+G0 X0 Y0
+G0 Z5
+G1 Z-1 F200
+G1 X30 F800
+G1 Y30
+G1 X0
+G1 Y0
+G0 Z5
+
+(Diamond middle)
+G0 X50 Y15
+G1 Z-1 F200
+G1 X65 Y30 F800
+G1 X80 Y15
+G1 X65 Y0
+G1 X50 Y15
+G0 Z5
+
+(Zigzag right)
+T2 M6
+S12000 M3
+G0 X100 Y0
+G1 Z-1 F200
+G1 X110 Y30 F800
+G1 X120 Y0
+G1 X130 Y30
+G1 X140 Y0
+G0 Z5
+M5
+M30
