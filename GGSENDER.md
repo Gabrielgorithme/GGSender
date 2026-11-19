@@ -8,7 +8,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.7.2**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.7.3**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -216,7 +216,9 @@ software): which side of the picture goes, what a click finds, that everything c
 (2324, "the pendant": `tool <length>`, `zero [offset]`, `wco <z>`, `state`, one per line, answered
 with the machine state as JSON). It plays the broken-bit case through the real windows and prints
 PASS/FAIL per check, from the fake's own state. `FIRST_TOOL` picks upstream's *First tool* setting,
-`CHOICE=1` resumes keeping the tool. Start the server with a fresh home folder for each run.
+`CHOICE=1` resumes keeping the tool. `NOREF=1` (0.7.3) resumes with no job run before, so with no
+reference, as after a lost connection: choice 1 measures the tool first; `NOREF=skip` selects *Do
+not measure*. Start the server with a fresh home folder for each run.
 
 The scripts set the interface's stored settings (`localStorage` key `sienci`: Ethernet to
 127.0.0.1:2323, tool change strategy *Ignore*, no pre-flight pop-up), connect, load the file, run,
@@ -228,6 +230,49 @@ an I/K arc in G17 with `error:33`. Since 0.7.1 its positions are machine coordin
 time and answers empty lines. It is a stand-in for what the fork depends on, not FluidNC.
 
 ## Change log
+
+### 0.7.3 (on gSender 1.6.4)
+
+**Resume From, option 1 with no reference: the tool is measured first.** Seen on the machine with
+0.7.2 after a lost USB link: gSender connects again, so it has no reference (it is not kept across
+a connection). The tool and Z zero are the same, so option 1 is the true statement, but option 1
+measured nothing and the job went on with no reference. The action the owner wanted was that of
+option 3, whose statement ("I set Z zero again by hand") was false. Why the reference matters
+there: without one, a tool that breaks cannot be replaced by measurement, and Z zero must be set by
+hand.
+
+- Option 1 now has a second answer when the reference is not correct (none, or Z zero seen to
+  change): **Measure T.. first** (the default: gSender measures the tool on the sensor before the
+  job continues, it becomes the reference, Z zero is not written) or **Do not measure** (0.7.2
+  behaviour: the job continues at once, and the next tool change measures the tool in the spindle
+  first, then asks for the new one). With a correct reference option 1 asks nothing and measures
+  nothing, as before.
+- New resume tool mode `reference-same` (`resumeSplice.js` `TOOL_MODES`, `ResumeToolMode`): the
+  wizard is the same as for option 3 (`reference`: only measure, no `G10`); the tool change window
+  gives its own reason (*You selected this: the same tool is in the spindle, and Z zero did not
+  change.*), never "You set Z zero with this tool".
+- What 0.7.2 did with option 1 and no reference was not wrong for the part: the simulated board
+  and the end-to-end run show the next tool change measuring the old tool first and Z zero staying
+  where it was. It only left the job without a reference until then.
+
+**The line selected in the 3D view is offered in Resume From.** A button *Selected line (N..)* next
+to *Where it stopped* puts that line in the field. The dialog still opens on the stop point when
+there is one; with no stop point it opens on the selected line. (With 0.7.2: click the operation to
+see it alone, click the move, then *Resume From*, *Selected line*.)
+
+Tests added: the choice logic (option 1 in the three states, the default, *Do not measure*); the
+decision and the window text for the new mode; the server (the mode needs the tool change line, is
+handed once); the dialog (default, both answers, a correct reference, a stale one, the answer
+forgotten on reopening, the tool recorded, the selected line with and without a stop point, a line
+of another file). Simulated-board runs of the real controller: no reference, option 1 with the
+measurement (reference valid, no `G10`, offset untouched, the next tool measured against it, Z
+zero where it was) and without it (the next tool change decides "full", Z zero where it was).
+
+The built app was driven against the fake FluidNC: `NOREF=1` 23 checks passed, `NOREF=skip` 11,
+and the two scenarios of 0.7.1 again (24 and 19), and `isolate.js` (18).
+
+Not checked: nothing run on Windows or on the machine. The lost-connection case was played by
+connecting and resuming with no job run before, not by cutting a link mid-job.
 
 ### 0.7.2 (on gSender 1.6.4)
 
@@ -874,6 +919,24 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
+
+## To check on the machine after installing 0.7.3
+
+Air cuts, hand near the e-stop. Checks 2 and 3 move Z to the tool sensor.
+
+1. Title bar shows `GGSender 0.7.3 (gSender 1.6.4)`.
+2. Connect (the `T` chip shows the grey barred circle: no reference). Load a file, *Resume From*, a
+   line some moves into an operation whose tool is in the spindle. Option 1 is selected, and below
+   it *Measure T.. first* is selected. *Sent before the line* has the `M6` line. Resume: the tool
+   change window says *gSender measures T.. as the reference* and *You selected this: the same tool
+   is in the spindle, and Z zero did not change.* It has no *Install New Tool* step. After the
+   probe the chip is green, Z zero is where it was, and the job continues.
+3. The same, with *Do not measure*: no `M6` line, the job continues at once. At the next tool
+   change the window says *gSender first measures the tool in the spindle as the new reference.
+   Then you fit T..*. Change the tool only after that first probe.
+4. With a green chip (a tool was probed), *Resume From* option 1 shows no second question.
+5. Click a move in the 3D view, then *Resume From*: the button *Selected line (N..)* is there and
+   puts that line in the field. The dialog still opens on *Where it stopped*.
 
 ## To check on the machine after installing 0.7.2
 
