@@ -105,8 +105,17 @@ class FakeBoard extends events.EventEmitter {
  * starts the spindle only while held, and a "~" with the spindle stopped
  * starts it itself (FluidNC's restore, without any spin-up wait unless its
  * config sets one). Status reports carry Ov: and A:S while the spindle turns.
+ *
+ * After a cycle start the moves that were held take their time, as on the
+ * machine: the board reports Run for RESUME_RUN_MS. gSender learns of a
+ * cycle start made elsewhere (the pendant) from a Run report after the hold;
+ * without this the board is back in Idle within a few milliseconds, between
+ * two reports, and the test of that passed only when a "$G" query happened
+ * to be in the board's queue at the moment of a report.
  */
 class HoldBoard extends FakeBoard {
+    static RESUME_RUN_MS = 700;
+    runUntil = 0;
     held = false;
     holdSub = 0;
     spindle = false;
@@ -115,7 +124,7 @@ class HoldBoard extends FakeBoard {
     log = []; // lines and realtime bytes in the order the board handled them
 
     status() {
-        let state = this.queue.length > 0 || this.busy ? 'Run' : 'Idle';
+        let state = this.queue.length > 0 || this.busy || Date.now() < this.runUntil ? 'Run' : 'Idle';
         if (this.held) {
             state = `Hold:${this.holdSub}`;
         }
@@ -144,6 +153,7 @@ class HoldBoard extends FakeBoard {
                     this.restoredByCycleStart = true;
                 }
                 this.held = false;
+                this.runUntil = Date.now() + HoldBoard.RESUME_RUN_MS;
                 this.pump();
             }
             return;

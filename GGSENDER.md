@@ -338,6 +338,14 @@ Found on the way: the first end-to-end run failed where the simulated board pass
 goes out by `writeImmediate()`, which the simulated board hands to `write()` and the real
 connection does not. The record now takes both.
 
+Also found: the test *hold mode: a cycle start from the pendant resumes the job* (0.6.0) failed on
+GitHub after the merge of 0.7.5, so no release was made. It had always depended on chance: the
+holding board went back to Idle a few milliseconds after the cycle start, and gSender, which learns
+of a cycle start made elsewhere from a `Run` report, saw `Run` only when one of its own `$G`
+queries was in the board's queue at the moment of a report. The board now reports `Run` for 0.7 s
+after a cycle start, as a machine that finishes its held moves does. The product has the same gap
+in small: see *Still to do*.
+
 Not checked: nothing run on Windows or on the machine. That the jog is the cause is read from the
 owner's log of 19 Nov (the status `Jog` at the end of a spin-up, then `error:9` for the lines that
 waited) and the console of 22 Nov, not seen in a log of the 22 Nov case itself. What FluidNC
@@ -1346,6 +1354,11 @@ Do these with the spindle off or as an air cut first.
 - Operations list: start the job from a chosen operation (needs the modal-state rebuild above).
   (0.7.2 shows one operation alone on a click.) Ideas, not asked for: a click on the tool row to
   show all operations of that tool; move the camera to the operation shown.
+- A cycle start from the pendant during a gSender hold is seen from a `Run` report. If the held
+  moves are so short that the machine is Idle again before the next report (0.25 s), gSender stays
+  paused with the machine idle, and the owner must press Start in gSender. `Idle` after a hold
+  could count too, but a reset from the pendant also ends in `Idle`, and then the job must not go
+  on. Not changed.
 - *Send again* for a job that runs: a jog in the spin-up wait after `M3` still holds the machine
   and needs a stop and *Resume From* (see 0.7.5).
 - A link watchdog: no byte from the controller for a few seconds while gSender asks for status
