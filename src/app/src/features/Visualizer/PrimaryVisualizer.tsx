@@ -17,6 +17,7 @@ import { Tooltip } from 'app/components/Tooltip';
 import GcodeEditor from './GcodeEditor';
 // GGSender
 import PickCard from 'app/features/gg/PickCard';
+import RefusedLinesNotice from 'app/features/gg/RefusedLinesNotice';
 import PreflightControl from 'app/features/gg/PreflightPanel';
 import JobOperations from 'app/features/gg/JobOperations';
 import { Actions, State } from './definitions';
@@ -149,6 +150,7 @@ const PrimaryVisualizer = ({
 
                     {/* GGSender: picked G-code line, pre-flight check */}
                     <PickCard />
+                    <RefusedLinesNotice />
                     <PreflightControl />
 
                     {isEditorMounted && (

@@ -70,6 +70,8 @@ export interface ControllerListeners {
     'gg:homed': Array<Function>; // GGSender
     'gg:probe:state': Array<Function>; // GGSender
     'gg:job:error': Array<Function>; // GGSender
+    'gg:refused:state': Array<Function>; // GGSender
+    'gg:settled': Array<Function>; // GGSender
     'gg:resume:info': Array<Function>; // GGSender
     'gg:resume:error': Array<Function>; // GGSender
     'feeder:status': Array<Function>;
@@ -190,6 +192,8 @@ class Controller {
         'gg:homed': [], // GGSender
         'gg:probe:state': [], // GGSender
         'gg:job:error': [], // GGSender
+        'gg:refused:state': [], // GGSender
+        'gg:settled': [], // GGSender
         'gg:resume:info': [], // GGSender
         'gg:resume:error': [], // GGSender
         'feeder:status': [],

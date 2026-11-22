@@ -114,7 +114,9 @@ import {
 } from "../../lib/gg/opResets"; // GGSender
 import { HomedState } from "../../lib/gg/homedState"; // GGSender
 import { ResumeSession, hasToolReference } from "../../lib/gg/resumeSplice"; // GGSender
-import { SentLines, errorReport, holdOnErrorPreference } from "../../lib/gg/errorHold"; // GGSender
+import { errorReport, holdOnErrorPreference } from "../../lib/gg/errorHold"; // GGSender
+import { SOURCE_FEEDER, SOURCE_JOB, SOURCE_REPLAY, WrittenLines } from "../../lib/gg/writtenLines"; // GGSender
+import { GCODE_LOCK, RefusedLines, jogRecoveryPreference } from "../../lib/gg/refusedLines"; // GGSender
 import { ProbeHistory, isReferenceLine } from "../../lib/gg/probeHistory"; // GGSender
 import { logEvent } from "../../lib/gg/trafficLog"; // GGSender
 import {
@@ -269,6 +271,37 @@ class GrblController {
 		this.connection = connection;
 		if (!this.connection) {
 			throw new Error("connection must be specified");
+		}
+		// GGSender: a record of every line written, to know which line a
+		// reply answers (lib/gg/writtenLines.js)
+		// There are two ways out: write() and writeImmediate() ("$G" goes by
+		// the second). Where writeImmediate() hands the data on to write()
+		// (the simulated board does), that one call is not counted twice.
+		// Any other write is counted, also one made while another is still
+		// in progress (a board that replies at once makes gSender write the
+		// next line from inside the first write).
+		this.ggWritten = new WrittenLines();
+		let ggHandedOn = null;
+		const ggWrite = connection.write.bind(connection);
+		connection.write = (data, ...rest) => {
+			if (ggHandedOn !== null && data === ggHandedOn) {
+				ggHandedOn = null;
+			} else {
+				this.ggWritten.onWrite(data);
+			}
+			return ggWrite(data, ...rest);
+		};
+		if (typeof connection.writeImmediate === "function") {
+			const ggWriteImmediate = connection.writeImmediate.bind(connection);
+			connection.writeImmediate = (data, ...rest) => {
+				this.ggWritten.onWrite(data);
+				ggHandedOn = data;
+				try {
+					return ggWriteImmediate(data, ...rest);
+				} finally {
+					ggHandedOn = null;
+				}
+			};
 		}
 
 		this.connection.setWriteFilter((data) => {
@@ -481,6 +514,7 @@ class GrblController {
 			if (line.length === 0) {
 				return;
 			}
+			this.ggWritten.mark(SOURCE_FEEDER); // GGSender
 
 			this.emit("serialport:write", line + "\n", {
 				...context,
@@ -493,6 +527,14 @@ class GrblController {
 			});
 			log.silly(`> ${line}`);
 		});
+		// GGSender: no feeder line goes out while lines that the controller
+		// refused wait to be sent again (lib/gg/refusedLines.js)
+		const ggFeederNext = this.feeder.next.bind(this.feeder);
+		this.ggFeederNext = ggFeederNext;
+		this.feeder.next = () =>
+			this.ggRefused && this.ggRefused.pending
+				? this.feeder.state.pending
+				: ggFeederNext();
 		this.feeder.on("hold", noop);
 		this.feeder.on("unhold", noop);
 		this.feeder.on("complete", () => {
@@ -752,7 +794,7 @@ class GrblController {
 			this.emit("serialport:read", line);
 
 			this.ggOpResets.onWritten(); // GGSender: one entry per line written
-			this.ggSent.push(this.sender.state.sent - 1, line); // GGSender
+			this.ggWritten.mark(SOURCE_JOB, { seq: this.sender.state.sent - 1 }); // GGSender
 			this.write(line + "\n");
 			log.silly(`> ${line}`);
 		});
@@ -774,7 +816,6 @@ class GrblController {
 		this.workflow.on("start", (...args) => {
 			this.emit("workflow:state", this.workflow.state);
 			this.ggOpResets.reset(); // GGSender
-			this.ggSent.reset(); // GGSender
 			this.sender.rewind();
 			this.sender.resumeCountdown();
 		});
@@ -785,7 +826,7 @@ class GrblController {
 			this.sender.stopCountdown();
 			this.ggHold.reset(); // GGSender
 			this.ggOpResets.reset(); // GGSender
-			this.ggSent.reset(); // GGSender
+			this.ggRefused.reset(); // GGSender
 			this.ggResume.restore(this.sender); // GGSender: program back as loaded
 			this.ggProbes.setWizard(null); // GGSender: no tool change wizard runs now
 		});
@@ -827,7 +868,11 @@ class GrblController {
 			},
 		});
 		// GGSender: job lines not yet answered, to hold at an error (lib/gg/errorHold.js)
-		this.ggSent = new SentLines();
+		// GGSender: lines refused because the machine jogged (lib/gg/refusedLines.js)
+		this.ggRefused = new RefusedLines({
+			onChange: (state) => this.emit("gg:refused:state", state),
+			log: (text) => logEvent("refused", text),
+		});
 		// GGSender: resume from a line (lib/gg/resumeSplice.js)
 		this.ggResume = new ResumeSession({ log: (msg) => logEvent("resume", msg) });
 		// GGSender: homed or not, from what the controller reports (lib/gg/homedState.js)
@@ -897,6 +942,22 @@ class GrblController {
 				inches: _.get(this.settings, "settings.$13") === "1",
 				jobRunning: this.workflow.state === WORKFLOW_STATE_RUNNING,
 			});
+			// GGSender: refused lines that only wait are sent again when the machine is idle
+			if (this.ggRefused.waitOnly && res.activeState === GRBL_ACTIVE_STATE_IDLE) {
+				this.ggReplayRefused();
+			}
+			// GGSender: ready = idle, and no line of the job or of the feeder
+			// waits for a reply. FluidNC reports Idle while it waits for the
+			// spindle with lines in its buffer: a jog then makes it refuse them.
+			const ggSettled =
+				res.activeState === GRBL_ACTIVE_STATE_IDLE &&
+				!this.ggWritten.queue.some((l) => l.source !== "other") &&
+				this.feeder.size() === 0 &&
+				!this.ggRefused.pending;
+			if (ggSettled !== this.ggSettled) {
+				this.ggSettled = ggSettled;
+				this.emit("gg:settled", ggSettled);
+			}
 			// GGSender: follow the hold; a pendant's cycle start resumes the job
 			if (
 				this.ggHold.onStatus(res) === "resumed-elsewhere" &&
@@ -968,6 +1029,7 @@ class GrblController {
 		});
 
 		this.runner.on("ok", (res) => {
+			const ggLine = this.ggWritten.onReply(); // GGSender: the line this answers
 			if (this.actionMask.queryParserState.reply) {
 				if (this.actionMask.replyParserState) {
 					this.actionMask.replyParserState = false;
@@ -983,6 +1045,20 @@ class GrblController {
 				return;
 			}
 
+			// GGSender: the reply to a refused line that was sent again
+			if (ggLine && ggLine.source === SOURCE_REPLAY) {
+				noteOkElsewhere(this, "refused line sent again");
+				this.emit("serialport:read", res.raw);
+				this.ggWriteRefused(this.ggRefused.ok());
+				return;
+			}
+
+			// GGSender: a line of the job or of the feeder accepted while refused
+			// lines wait: it ran without them (lib/gg/refusedLines.js)
+			if (ggLine && (ggLine.source === SOURCE_JOB || ggLine.source === SOURCE_FEEDER)) {
+				this.ggRefused.accepted(ggLine.text);
+			}
+
 			const { hold, sent, received } = this.sender.state;
 			if (this.workflow.state === WORKFLOW_STATE_RUNNING) {
 				this.emit("serialport:read", res.raw);
@@ -993,7 +1069,6 @@ class GrblController {
 					this.sender.unhold();
 				}
 				this.ggOpResets.onReply(); // GGSender
-				this.ggSent.shift(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -1011,7 +1086,6 @@ class GrblController {
 					);
 				}
 				this.ggOpResets.onReply(); // GGSender
-				this.ggSent.shift(); // GGSender
 				this.sender.ack();
 				this.sender.next({ isOk: true });
 				return;
@@ -1029,12 +1103,22 @@ class GrblController {
 			const code = Number(res.message) || undefined;
 			const error = _.find(GRBL_ERRORS, { code: code });
 
+			const ggLine = this.ggWritten.onReply(); // GGSender: the line this answers
+			// GGSender: a line refused because the machine jogged, in a paused
+			// job: kept to be sent again, no error shown (lib/gg/refusedLines.js)
+			if (this.ggRefusedLine(code, ggLine)) {
+				return;
+			}
+
 			// GGSender: the first error of a running job holds the machine at
 			// once, so the lines already sent after it do not run (lib/gg/errorHold.js)
 			const ggJob =
 				this.workflow.state === WORKFLOW_STATE_RUNNING ||
 				this.workflow.state === WORKFLOW_STATE_PAUSED;
-			const ggFailed = ggJob ? this.ggSent.shift() : null;
+			const ggFailed =
+				ggJob && ggLine && ggLine.source === SOURCE_JOB
+					? { seq: ggLine.seq, line: ggLine.text }
+					: null;
 			const ggHeld =
 				this.workflow.state === WORKFLOW_STATE_RUNNING &&
 				holdOnErrorPreference(store.get("preferences", {}));
@@ -1256,6 +1340,7 @@ class GrblController {
 		});
 
 		this.runner.on("startup", (res) => {
+			this.ggWritten.reset(); // GGSender: the controller started again, nothing waits for a reply
 			this.emit("serialport:read", res.raw);
 
 			// The startup message always prints upon startup, after a reset, or at program end.
@@ -1749,6 +1834,85 @@ class GrblController {
 		socket.emit("homing:has-homed", this.hasHomedSet);
 		socket.emit("gg:homed", this.ggHomed.snapshot()); // GGSender
 		socket.emit("gg:probe:state", this.ggProbes.snapshot()); // GGSender
+		socket.emit("gg:refused:state", this.ggRefused.snapshot()); // GGSender
+		socket.emit("gg:settled", this.ggSettled !== false); // GGSender
+	}
+
+	/**
+	 * GGSender: an error reply. True when it was a line refused because the
+	 * machine jogged ("error:9") in a paused job, and it is kept to be sent
+	 * again (lib/gg/refusedLines.js).
+	 */
+	ggRefusedLine(code, line) {
+		if (line && line.source === SOURCE_REPLAY) {
+			// the reply to a line sent again
+			if (code === GCODE_LOCK) {
+				this.ggRefused.refusedAgain();
+				this.emit("serialport:read", "error:9 (G-code lock)");
+				return true;
+			}
+			this.ggRefused.failed(code);
+			return false;
+		}
+		if (code !== GCODE_LOCK) {
+			return false;
+		}
+		// why an error 9 is not kept, for the traffic log
+		let why = null;
+		if (!line) {
+			why = "no line waited for a reply";
+		} else if (this.workflow.state !== WORKFLOW_STATE_PAUSED) {
+			why = `the job is ${this.workflow.state}, not paused`;
+		} else if (this.runner.isAlarm()) {
+			why = "the controller is in alarm";
+		} else if (!jogRecoveryPreference(store.get("preferences", {}))) {
+			why = "the setting is off";
+		} else if (line.source !== SOURCE_JOB && line.source !== SOURCE_FEEDER) {
+			why = `the line is not of the job or the feeder (${line.source})`;
+		}
+		if (why) {
+			logEvent("refused", `error:9 for "${line ? line.text : "?"}" is not kept: ${why}`);
+			return false;
+		}
+		if (line.source === SOURCE_JOB) {
+			// a line of the job, sent before the pause. Counted as upstream
+			// counts every error of a paused job.
+			this.ggRefused.add("job", line.text);
+			this.ggOpResets.onReply();
+			this.sender.ack();
+			this.sender.next();
+		} else {
+			// a line of the feeder (a tool change line). The feeder is not
+			// acknowledged: it goes on when the line was sent again.
+			this.ggRefused.add("feeder", line.text);
+		}
+		this.emit("serialport:read", "error:9 (G-code lock)");
+		return true;
+	}
+
+	/** GGSender: send the refused lines again, when the machine is idle and nothing waits for a reply. */
+	ggReplayRefused() {
+		const { sent, received } = this.sender.state;
+		const idle = _.get(this.state, "status.activeState") === GRBL_ACTIVE_STATE_IDLE;
+		if (!idle || received < sent || !this.ggRefused.canReplay()) {
+			return false;
+		}
+		this.ggWriteRefused(this.ggRefused.start());
+		return true;
+	}
+
+	/** GGSender: write one refused line again (null: all are done, the feeder goes on). */
+	ggWriteRefused(text) {
+		if (text !== null) {
+			this.emit("serialport:read", text);
+			this.ggWritten.mark(SOURCE_REPLAY);
+			this.write(text + "\n");
+			return;
+		}
+		if (this.ggRefused.takeFeederWait()) {
+			this.feeder.ack();
+		}
+		this.ggFeederNext();
 	}
 
 	emit(eventName, ...args) {
@@ -2590,6 +2754,12 @@ class GrblController {
 				const [wizard] = args;
 				this.ggProbes.setWizard(wizard);
 				logEvent("probe", `wizard ${JSON.stringify(wizard || null)}`);
+			},
+			// GGSender: the owner asks to send the refused lines again
+			"gg:refused:replay": () => {
+				if (!this.ggReplayRefused()) {
+					this.emit("gg:refused:state", this.ggRefused.snapshot());
+				}
 			},
 			"gg:probe:query": () => {
 				this.emit("gg:probe:state", this.ggProbes.snapshot());

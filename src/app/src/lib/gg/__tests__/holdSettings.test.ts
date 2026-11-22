@@ -22,7 +22,12 @@ describe('GGSender: pause settings', () => {
             ggResumeSpinupSeconds: 5,
             ggResetOverridesPerOp: true,
             ggHoldOnError: true,
+            ggJogRecovery: true,
         });
+    });
+
+    it('the jog recovery can be switched off', () => {
+        expect(holdSettingsPayload((k, d) => (k === 'workspace.gg.jogRecovery' ? false : d)).ggJogRecovery).toBe(false);
     });
 
     it('maps the choices', () => {
@@ -30,7 +35,7 @@ describe('GGSender: pause settings', () => {
             holdSettingsPayload(
                 getter({ [PAUSE_MODE_KEY]: PAUSE_UPSTREAM, [HOLD_STOPS_SPINDLE_KEY]: true, [RESUME_SPINUP_KEY]: '8' }),
             ),
-        ).toEqual({ ggPauseMode: 'upstream', ggHoldStopsSpindle: true, ggResumeSpinupSeconds: 8, ggResetOverridesPerOp: true, ggHoldOnError: true });
+        ).toEqual({ ggPauseMode: 'upstream', ggHoldStopsSpindle: true, ggResumeSpinupSeconds: 8, ggResetOverridesPerOp: true, ggHoldOnError: true, ggJogRecovery: true });
         expect(holdSettingsPayload(getter({ [PAUSE_MODE_KEY]: PAUSE_HOLD })).ggPauseMode).toBe('hold');
         expect(holdSettingsPayload(getter({ [PAUSE_MODE_KEY]: 'nonsense' })).ggPauseMode).toBe('hold');
     });

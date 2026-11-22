@@ -339,6 +339,13 @@ class HomingBoard extends FakeBoard {
  * reads v. The part's surface is at machine Z = P + L (zeroByHand puts the Z
  * zero there, as a pendant does: no line goes through gSender). G4 dwells in
  * real time, as the wizard counts on it to get a report after the probe.
+ *
+ * The spindle and the pendant's jog, as FluidNC does them (0.7.5): "M5" waits
+ * `spindown` ms for the spindle to stop, and the board reports Idle all that
+ * time with the lines after it still in its buffer. pendantJog() is a jog
+ * from the pendant: taken in Idle, so also in that wait, and run when the
+ * wait ends. While the machine jogs it reports "Jog" and refuses every
+ * G-code line with error:9. The jog ends when it has refused `lines` lines.
  */
 class SensorBoard extends FakeBoard {
     S = -70; // sensor trigger height, for a tool of length 0
@@ -352,6 +359,12 @@ class SensorBoard extends FakeBoard {
     wcoCounter = 0;
     wcoEvery = { idle: 4, run: 8 };
     holdWco = false;
+    spindown = 0; // ms that "M5" waits, reported as Idle
+    delaying = false; // in that wait
+    jogQueued = null; // a jog taken during the wait
+    jogging = null; // { lines }: lines still to refuse before the jog ends
+    spindleOn = false;
+    refused = []; // the lines refused with error:9
     active = false; // a line other than a "$" query is being handled
     g10 = []; // G10 lines as received
 
@@ -360,8 +373,10 @@ class SensorBoard extends FakeBoard {
     }
 
     status() {
-        // a "$" query does not make the machine run
-        const state = this.active || this.queue.some((l) => !l.startsWith('$')) ? 'Run' : 'Idle';
+        // a "$" query does not make the machine run; the spindle wait reads Idle
+        let state = this.active || this.queue.some((l) => !l.startsWith('$')) ? 'Run' : 'Idle';
+        if (this.delaying) state = 'Idle';
+        if (this.jogging) state = 'Jog';
         let wco = '';
         if (this.wcoCounter <= 0 && !this.holdWco) {
             wco = `|WCO:0.000,0.000,${this.wcoZ.toFixed(3)}`;
@@ -375,6 +390,25 @@ class SensorBoard extends FakeBoard {
     setWco(z) {
         // no report is forced: the change shows when the counter comes round
         this.wcoZ = z;
+    }
+
+    /**
+     * A jog from the pendant, which ends after the board refused `lines`
+     * G-code lines. Taken now when the board is idle; during the spindle
+     * wait it runs when the wait ends, as on FluidNC.
+     */
+    pendantJog({ lines = 1, dz = 0 } = {}) {
+        const jog = { lines, dz };
+        if (this.delaying) {
+            this.jogQueued = jog;
+        } else {
+            this.startJog(jog);
+        }
+    }
+
+    startJog(jog) {
+        this.mz += jog.dz;
+        this.jogging = { lines: jog.lines };
     }
 
     /** From the pendant: Z zero with the tool tip on a surface (the part's by default). */
@@ -396,9 +430,19 @@ class SensorBoard extends FakeBoard {
                 this.busy = false;
                 return;
             }
+            // FluidNC refuses G-code while it jogs
+            if (this.jogging && !line.startsWith('$')) {
+                this.refused.push(line);
+                this.jogging.lines -= 1;
+                if (this.jogging.lines <= 0) this.jogging = null;
+                this.reply('error:9');
+                setImmediate(step);
+                return;
+            }
             this.received.push(line);
             this.active = !line.startsWith('$');
             let wait = 0;
+            let spindleWait = false;
             const code = line.replace(/\([^)]*\)/g, ' ');
             if (line === '$G') {
                 this.reply(`[GC:G0 ${this.wcs} G17 G21 ${this.distance} G94 M5 M9 T0 F0 S0]`);
@@ -425,6 +469,16 @@ class SensorBoard extends FakeBoard {
                 if (wait === 0 && /^N\d+ /.test(line) && /[XYZ]-?[\d.]/.test(code)) {
                     wait = 2;
                 }
+                if (/M0*[34](?![0-9])/.test(code)) this.spindleOn = true;
+                // the spindle stops: the line is answered after the wait
+                if (/M0*5(?![0-9])/.test(code)) {
+                    if (this.spindown > 0 && this.spindleOn) {
+                        wait = this.spindown;
+                        spindleWait = true;
+                        this.delaying = true;
+                    }
+                    this.spindleOn = false;
+                }
             }
             const done = () => {
                 if (!this.isOpen) {
@@ -436,6 +490,14 @@ class SensorBoard extends FakeBoard {
                     this.reply(`[PRB:1.000,2.000,${this.mz.toFixed(3)}:1]`);
                 }
                 this.active = false;
+                if (spindleWait) {
+                    this.delaying = false;
+                    // the jog taken during the wait runs now, before the lines that waited
+                    if (this.jogQueued) {
+                        this.startJog(this.jogQueued);
+                        this.jogQueued = null;
+                    }
+                }
                 this.reply('ok');
                 setImmediate(step);
             };
@@ -1043,7 +1105,7 @@ describe('GGSender: job streaming against a simulated board', () => {
     // eslint-disable-next-line global-require
     const { decideFixedSensor } = require('../../../../app/src/lib/gg/toolChangeDecision');
 
-    const twoTools = () => {
+    const twoTools = ({ fusionEnd = false } = {}) => {
         const out = [
             '(prog)',
             '(T5 D=6 CR=0 - ZMIN=-1 - flat end mill)',
@@ -1067,7 +1129,10 @@ describe('GGSender: job streaming against a simulated board', () => {
         ];
         let n = 25;
         for (let i = 0; i < 150; i++) out.push(`N${n++} X${(i % 40) * 0.25} Y${Math.floor(i / 40) * 0.5}`);
-        out.push(`N${n++} G0 Z5`, `N${n++} M5`, '', '(Op B)', `N${n++} T7 M6`, `N${n++} S12000 M3`, `N${n++} G0 X20 Y0`, `N${n++} Z5`, `N${n++} G1 Z-1 F200`);
+        out.push(`N${n++} G0 Z5`, ...(fusionEnd ? [`N${n++} M9`] : []), `N${n++} M5`);
+        // as Fusion ends an operation before a tool change (the owner's programs)
+        if (fusionEnd) out.push(`N${n++} G28 G91 Z0`, `N${n++} G90`);
+        out.push('', '(Op B)', `N${n++} T7 M6`, `N${n++} S12000 M3`, `N${n++} G0 X20 Y0`, `N${n++} Z5`, `N${n++} G1 Z-1 F200`);
         for (let i = 0; i < 60; i++) out.push(`N${n++} G1 X${20 + (i % 10)} Y${Math.floor(i / 10)} F800`);
         out.push(`N${n++} G0 Z5`, `N${n++} M9`, `N${n++} M5`, `N${n++} G28 G91 Z0`, `N${n++} M30`);
         return out.join('\n');
@@ -1099,9 +1164,12 @@ describe('GGSender: job streaming against a simulated board', () => {
      * its start code, then each step's code. `newLength`: the tool fitted
      * before "Probe Changed Tool".
      */
-    const runWizard = async (controller, board, variant, { target, newLength } = {}) => {
+    const runWizard = async (controller, board, variant, { target, newLength, afterStart } = {}) => {
         controller.command('gg:probe:wizard', { variant, target });
         controller.command('gcode', wizardLines.startLines());
+        if (afterStart) {
+            await afterStart();
+        }
         expect(await feederDone(controller, board)).toBe(true);
         if (variant === 'reference' || variant === 'full') {
             controller.command('wizard:step', 0, 0);
@@ -1263,6 +1331,190 @@ describe('GGSender: job streaming against a simulated board', () => {
             board.zeroByHand(board.P - 1);
             expect(await waitFor(() => probeState(controller).status === 'stale', 5000)).toBe(true);
         } finally {
+            await stop(controller, board);
+        }
+    });
+
+    // ---- a jog from the pendant at a tool change (lib/gg/refusedLines.js) ----
+
+    const refusedStates = (board) => board.events.filter(([e]) => e === 'gg:refused:state').map(([, st]) => st);
+    const lastRefused = (board) => refusedStates(board).pop() || { lines: [], moves: false, broken: null, replaying: false };
+    const errorsShown = (board) => board.events.filter(([e]) => e === 'error' || e === 'gg:job:error' || e === 'gcode_error');
+
+    /** The fusion-ended job up to its second tool change, with the spindle stopping for `spindown` ms. */
+    const toSecondToolChange = async (controller, board, spindown) => {
+        controller.command('gg:probe:loaded', '5');
+        const gcode = twoTools({ fusionEnd: true });
+        await new Promise((resolve, reject) => {
+            controller.command('gcode:load', { name: 'two.nc' }, gcode, {}, (err) => (err ? reject(err) : resolve()));
+        });
+        controller.command('gcode:start');
+        await nextToolChange(board, 1);
+        await runWizard(controller, board, 'reference', { target: 'T5' });
+        board.spindown = spindown;
+        return nextToolChange(board, 2);
+    };
+
+    it('the owner\'s 22 Nov: a jog from the pendant while the spindle stops for a tool change. The refused lines are kept and sent again, the tool change goes on, no error and no stop', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            const plane = board.zeroPlane();
+            await toSecondToolChange(controller, board, 1500);
+            // FluidNC is in the wait of "M5" and reports Idle; "G28 G91 Z0" and "G90" wait in its buffer
+            // (this board gets no line for the M6: gSender writes none when only the comment is left)
+            expect(board.delaying).toBe(true);
+            const received = board.received.length;
+            await runWizard(controller, board, 'measure', {
+                target: 'T7',
+                newLength: 41.25,
+                afterStart: async () => {
+                    // the wizard's "%wait" is in the buffer too; the owner jogs now
+                    board.pendantJog({ lines: 3, dz: 3 });
+                    expect(await waitFor(() => board.refused.length === 3, 5000)).toBe(true);
+                    expect(board.refused.map((l) => l.replace(/^N\d+\s*/, ''))).toEqual(['G28 G91 Z0', 'G90', 'G4 P0.5']);
+                    await sleep(700);
+
+                    // kept, in order, with where each came from; nothing is called an error
+                    const st = lastRefused(board);
+                    expect(st.lines.map((l) => [l.source, l.text.replace(/^N\d+\s*/, '')])).toEqual([
+                        ['job', 'G28 G91 Z0'],
+                        ['job', 'G90'],
+                        ['feeder', 'G4 P0.5'],
+                    ]);
+                    expect(st).toMatchObject({ moves: true, broken: null, replaying: false });
+                    expect(errorsShown(board)).toEqual([]);
+                    // nothing moves by itself (the owner has just jogged), and no tool change line passes the refused ones
+                    expect(board.received.slice(received).filter((l) => !l.startsWith('$'))).toEqual([]);
+                    expect(controller.feeder.size()).toBeGreaterThan(0);
+
+                    // "Send again"
+                    controller.command('gg:refused:replay');
+                    expect(await waitFor(() => lastRefused(board).lines.length === 0, 5000)).toBe(true);
+                },
+            });
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+
+            // the refused lines ran, in their order, before any other tool change line
+            const after = board.received.slice(received).filter((l) => !l.startsWith('$')).map((l) => l.replace(/^N\d+\s*/, ''));
+            expect(after.slice(0, 3)).toEqual(['G28 G91 Z0', 'G90', 'G4 P0.5']);
+            expect(errorsShown(board)).toEqual([]);
+            // and the tool change did its work: T7 against the reference, Z zero where it was
+            expect(board.g10).toHaveLength(1);
+            expect(board.zeroPlane()).toBeCloseTo(plane, 3);
+            expect(await waitFor(() => probeState(controller).lastProbe?.kind === 'measured', 5000)).toBe(true);
+            const log = fs.readFileSync(trafficLog.getTrafficLogFile(), 'utf8');
+            expect(log).toMatch(/# refused: refused \(job\): "N\d+ G28 G91 Z0"/);
+            expect(log).toMatch(/# refused: all refused lines were sent again/);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('a jog that makes the controller refuse only the wizard\'s wait: the wait is sent again by itself when the machine is idle', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            await toSecondToolChange(controller, board, 0);
+            // every job line was answered; the owner jogs just before the tool change window sends its first line
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.sent && !board.busy, 5000)).toBe(true);
+            board.pendantJog({ lines: 1 });
+            await runWizard(controller, board, 'measure', { target: 'T7', newLength: 41.25 });
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+            expect(board.refused).toEqual(['G4 P0.5']);
+            expect(refusedStates(board)[0]).toMatchObject({ lines: [{ source: 'feeder', text: 'G4 P0.5' }], moves: false });
+            expect(lastRefused(board).lines).toEqual([]);
+            expect(errorsShown(board)).toEqual([]);
+            expect(board.g10).toHaveLength(1);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('the jog ends between two lines: one refused, the next accepted. The sequence is broken, nothing is sent again', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            await toSecondToolChange(controller, board, 1200);
+            expect(board.delaying).toBe(true);
+            board.pendantJog({ lines: 1 }); // refuses "G28 G91 Z0" only; "G90" is accepted
+            expect(await waitFor(() => lastRefused(board).broken !== null, 5000)).toBe(true);
+            const st = lastRefused(board);
+            expect(st.broken).toBe('accepted-after-refused');
+            expect(st.lines.map((l) => l.text.replace(/^N\d+\s*/, ''))).toEqual(['G28 G91 Z0']);
+            const received = board.received.length;
+            controller.command('gg:refused:replay');
+            controller.command('gg:probe:wizard', { variant: 'measure', target: 'T7' });
+            controller.command('gcode', wizardLines.startLines());
+            await sleep(800);
+            // neither the refused line nor a tool change line is sent
+            expect(board.received.slice(received).filter((l) => !l.startsWith('$'))).toEqual([]);
+            // Stop clears it
+            controller.command('gcode:stop', { force: true });
+            expect(await waitFor(() => lastRefused(board).lines.length === 0 && lastRefused(board).broken === null, 5000)).toBe(true);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('a second jog while the lines are sent again: the line refused again waits again, and goes with the next "Send again"', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            await toSecondToolChange(controller, board, 1200);
+            board.pendantJog({ lines: 2 });
+            expect(await waitFor(() => lastRefused(board).lines.length === 2, 5000)).toBe(true);
+            await sleep(400);
+            board.pendantJog({ lines: 1 }); // the owner jogs again and presses "Send again" at the same time
+            controller.command('gg:refused:replay');
+            expect(await waitFor(() => board.refused.length === 3, 5000)).toBe(true);
+            await sleep(300);
+            const st = lastRefused(board);
+            expect(st).toMatchObject({ replaying: false, broken: null });
+            expect(st.lines.map((l) => l.text.replace(/^N\d+\s*/, ''))).toEqual(['G28 G91 Z0', 'G90']);
+            const received = board.received.length;
+            controller.command('gg:refused:replay');
+            expect(await waitFor(() => lastRefused(board).lines.length === 0, 5000)).toBe(true);
+            expect(board.received.slice(received).filter((l) => !l.startsWith('$')).map((l) => l.replace(/^N\d+\s*/, ''))).toEqual(['G28 G91 Z0', 'G90']);
+            // the tool change runs as usual after that
+            await runWizard(controller, board, 'measure', { target: 'T7', newLength: 41.25 });
+            expect(await waitFor(() => controller.sender.state.received >= controller.sender.state.total, 20000)).toBe(true);
+            expect(errorsShown(board)).toEqual([]);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('"Send again" does nothing while the machine is not idle', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            await toSecondToolChange(controller, board, 1200);
+            board.pendantJog({ lines: 2 });
+            expect(await waitFor(() => lastRefused(board).lines.length === 2, 5000)).toBe(true);
+            board.jogging = { lines: 1000 }; // the owner keeps the machine jogging
+            expect(await waitFor(() => controller.state.status.activeState === 'Jog', 5000)).toBe(true);
+            // gSender's own "$" queries go on; no other line may come
+            const lines = () => board.received.filter((l) => !l.startsWith('$')).length;
+            const received = lines();
+            const refusedCount = board.refused.length;
+            controller.command('gg:refused:replay');
+            await sleep(400);
+            expect(lines()).toBe(received);
+            expect(board.refused.length).toBe(refusedCount);
+            expect(lastRefused(board).lines).toHaveLength(2);
+        } finally {
+            await stop(controller, board);
+        }
+    });
+
+    it('setting off: as upstream, each refused line is an error', async () => {
+        const { board, controller } = await startSensor();
+        try {
+            controller.command('settings:updated', { ggJogRecovery: false });
+            await toSecondToolChange(controller, board, 1200);
+            board.pendantJog({ lines: 2 });
+            expect(await waitFor(() => board.refused.length === 2, 5000)).toBe(true);
+            await sleep(300);
+            expect(refusedStates(board).filter((st) => st.lines.length > 0)).toEqual([]);
+            expect(board.events.filter(([e]) => e === 'gg:job:error')).toHaveLength(2);
+        } finally {
+            controller.command('settings:updated', { ggJogRecovery: true });
             await stop(controller, board);
         }
     });

@@ -92,6 +92,7 @@ const defaultState: State = {
             // where the last job stopped early (lib/gg/stopPoint); null = none
             lastStop: null,
             holdOnError: true,
+            jogRecovery: true,
             // tool changes follow the tool sensor reference (lib/gg/toolChangeDecision)
             referenceGuard: true,
             feedOverrideMin: '10',

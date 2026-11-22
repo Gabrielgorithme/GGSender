@@ -71,6 +71,7 @@ export interface Workspace {
         resumeFromLine: boolean;
         lastStop: unknown;
         holdOnError: boolean;
+        jogRecovery: boolean;
         referenceGuard: boolean;
         feedOverrideMin: string;
         settingsVersion: number;

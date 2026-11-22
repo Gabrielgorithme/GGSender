@@ -14,32 +14,12 @@
  * at once ("!", as the pause button does in 0.6.0): nothing more moves,
  * including the lines already queued. The job is paused and the interface is
  * told which line failed (the exact one: each reply is matched to the line it
- * answers, below; gSender's own "received" count runs ahead on skipped
- * comment lines). Stop throws the queued lines away (soft reset); a resume
+ * answers, in writtenLines.js; gSender's own "received" count runs ahead on
+ * skipped comment lines). Stop throws the queued lines away (soft reset); a resume
  * would run them.
  */
 
 export const holdOnErrorPreference = (prefs = {}) => prefs?.ggHoldOnError !== false;
-
-/** The job lines written to the controller and not yet answered, in order. */
-export class SentLines {
-    constructor() {
-        this.queue = [];
-    }
-
-    push(seq, line) {
-        this.queue.push({ seq, line: String(line).trim() });
-    }
-
-    /** The line an "ok" or "error" answers. */
-    shift() {
-        return this.queue.shift() || null;
-    }
-
-    reset() {
-        this.queue = [];
-    }
-}
 
 /** What the interface is told about the failing line. */
 export const errorReport = ({ code, message, failed, held }) => ({
