@@ -11,7 +11,7 @@ changed and why, how to build and install, the traps, and what is still to do. `
 short version that Claude Code loads by itself.
 
 - Base: official gSender **v1.6.4** (tag `v1.6.4`).
-- Fork build: **0.7.4**, set in `src/app/src/gg-build.json`.
+- Fork build: **0.7.5**, set in `src/app/src/gg-build.json`.
 - Branches: `gg/main` is the current state of the fork and the repository's default branch.
   Branch from it for each change (`gg/<version>`) and open a pull request into `gg/main`. The older
   `gg/0.x` branches are history.
@@ -95,6 +95,21 @@ Do not touch `app.asar.unpacked` next to it; it holds the native serial-port lib
 
 ## Traps
 
+- **FluidNC shows Idle while it waits for the spindle, with lines in its buffer.** `M5` (and `M3`)
+  wait several seconds (`spindown_ms`, `spinup_ms`) inside the line, and the status says `Idle` all
+  that time. The pendant takes a jog in `Idle`. FluidNC runs that jog when the wait ends and
+  refuses every G-code line that waited with `error:9` (G-code lock), gSender's included. So `Idle`
+  alone does not mean that the machine can take a jog or a line. See 0.7.5; the server's
+  `gg:settled` is the test that works (idle, and no job or feeder line waits for a reply).
+- **Upstream does not know which line a reply answers.** It credits an `ok` or an `error` to the
+  job or to the feeder from the state of the job (running: the job; paused with job lines
+  unanswered: the job; else the feeder). Around a tool change that is one off, and every error of a
+  paused job is counted as a job line's, so a refused feeder line is never acknowledged and the
+  tool change window is dead. `lib/gg/writtenLines.js` keeps the true order (0.7.5): read it,
+  do not count. `$G` is written with `writeImmediate()`, not `write()`: both must be recorded.
+- **The simulated boards reply inside `write()`.** A real port replies later. So in the simulation
+  gSender writes the next line from inside the first write. Code that guards against a call "while
+  a write is in progress" drops lines there (found in 0.7.5).
 - **FluidNC 4.1 does not report its work offset right after a change.** Grbl 1.1 does. FluidNC
   puts `WCO:` in every 10th status report when idle and every 30th when moving, and that is all.
   With gSender's 4 reports a second, a change (the tool change's own `G10`, a Z zero from the
@@ -202,6 +217,7 @@ Events worth searching for:
 | `resume` | A resume from a line: the line, the entry lines, refusals, program restored (0.7.0) |
 | `error-hold` | A job line refused by the controller, and the machine held (0.7.0) |
 | `probe` | The tool sensor reference at each change (valid, stale, none, with the last history entry), each tool change request (count, resumed or not, resume mode, reference state), and the wizard the interface runs (0.7.1) |
+| `refused` | A line that the controller refused with `error:9` in a paused job and that is kept to be sent again, with where it came from; why an `error:9` was not kept; a line accepted after a refused one; all lines sent again (0.7.5) |
 
 Code: `src/server/lib/gg/trafficLog.js` (the file), `src/server/lib/gg/streamDiagnostics.js` (the
 events), hooks in `lib/Connection.js`, `GrblController.js`, `CNCEngine.js`, and
@@ -239,7 +255,14 @@ node scripts/gg/e2e/resume.js /tmp/gg-e2e src/app/src/lib/gg/__tests__/fixtures/
 node scripts/gg/e2e/error.js /tmp/gg-e2e scripts/gg/e2e/xz-arc-without-g18.nc
 FAKE_LOG=/tmp/fake.log node scripts/gg/e2e/toolchange.js /tmp/gg-e2e-tc src/app/src/lib/gg/__tests__/fixtures/fusion-one-of-each.nc
 node scripts/gg/e2e/isolate.js /tmp/gg-e2e-iso          # needs the server only, no board
+# with the fake started as: SPINDOWN_MS=5000 node scripts/gg/e2e/fake-fluidnc.js 2323 /tmp/fake.log 25
+FAKE_LOG=/tmp/fake.log node scripts/gg/e2e/jog.js /tmp/gg-e2e-jog src/app/src/lib/gg/__tests__/fixtures/fusion-one-of-each.nc
 ```
+
+`jog.js` (0.7.5) plays a jog from the pendant while the spindle stops for a tool change. With
+`SPINDOWN_MS` the fake waits in `M5` and says Idle; the pendant port's `jog <ms>` is taken in that
+wait and run at its end, and the fake refuses every G-code line during the jog with `error:9`, as
+FluidNC does.
 
 `isolate.js` (0.7.2) loads `three-operations.nc` (three operations in three places), clicks the
 operations in the list and compares what the 3D view draws, pixel by pixel (Chromium draws WebGL in
@@ -263,6 +286,64 @@ an I/K arc in G17 with `error:33`. Since 0.7.1 its positions are machine coordin
 time and answers empty lines. It is a stand-in for what the fork depends on, not FluidNC.
 
 ## Change log
+
+### 0.7.5 (on gSender 1.6.4)
+
+**A jog at a tool change no longer costs the job.** Seen on the machine with 0.7.4, "frequently":
+at a tool change an *Error 9: the controller did not accept a line* window, four `error:9` in the
+console, and a tool change window that did nothing; the job had to be stopped and resumed.
+
+- Cause: see the first trap above. The program ends an operation with `M5`, `G28 G91 Z0`, `G90`,
+  `M6`. FluidNC waits in `M5` for the spindle and shows Idle. The owner, who jogs often, jogs from
+  the pendant as soon as the machine stops. FluidNC runs the jog when the wait ends and refuses the
+  lines that waited: the program's retract and `G90`, and the tool change's own first line (`G4
+  P0.5`, the `%wait`). Upstream then counts each error as a job line's and never acknowledges the
+  feeder: no tool change line is sent any more.
+- **The refused lines are kept and sent again** (`server/lib/gg/refusedLines.js`), for a job that
+  is paused (a tool change, `M0`, `M1`). A notice over everything lists them: *The controller
+  refused 3 lines*, with a **Send again** button, enabled when the machine is idle. The lines go
+  one at a time, in their order, and then the tool change goes on as if nothing had happened. No
+  error window. Nothing moves by itself: the retract moves Z, and the owner has just jogged and is
+  possibly near the spindle. Lines that only wait (`G4`) go again without a button.
+- No tool change line passes the refused lines: the feeder is held back until they were sent.
+- If the controller accepted a line after it refused one (the jog ended between two lines), the
+  sequence is broken and nothing is sent again: the notice turns red and says to stop the job and
+  use *Resume From*. The same when a line sent again gets another error.
+- **The tool change window says when the machine is ready**: *WAIT. The machine is not ready. Do
+  not jog.* while a line of the job or of the tool change waits for a reply or the machine moves,
+  then *The machine is ready. You can jog.* (`gg:settled` from the server). This is the way not to
+  need the button.
+- Setting **Send lines again after a jog at a tool change** (Config, GGSender; on by default). Off:
+  upstream, an error for each line.
+- **Which line a reply answers** is now recorded (`server/lib/gg/writtenLines.js`): every line
+  written, from the job, the feeder or gSender's own queries, in order. The error hold of 0.7.0
+  reads it too: its "line that failed" was the next line when a tool change had come before (the
+  22 Nov window said *line not known*). Upstream's own counting is not changed.
+- The *Error N* window for a job that runs says for error 9 what it means (a jog or an alarm).
+- Not handled: a jog in the spin-up wait of a job that runs (after `M3`). There the machine is
+  held at the first refused line as before (0.7.0), and the job must be stopped and resumed. The
+  same record would allow "Send again" there; left until this part is proven on the machine.
+
+Tests added: the record of written lines; the refused lines (order, lines that only wait, a broken
+sequence, refused again, another error); the words (25 words a sentence at most); the notice and
+the ready line. The simulated board has a spindle wait and a pendant jog that refuses lines: the
+owner's case (kept, nothing sent by itself, *Send again*, the same lines in order before any other
+tool change line, Z zero where it was), only the wait refused, a broken sequence, a second jog
+while lines are sent again, *Send again* while the machine jogs, the setting off. The built app
+against the fake FluidNC with a 5 s spindle wait and a jog from the pendant port
+(`scripts/gg/e2e/jog.js`, 14 checks passed), and the scenarios of 0.7.1 to 0.7.4 again (26, 21,
+25, 11 and 18).
+
+Found on the way: the first end-to-end run failed where the simulated board passed, because `$G`
+goes out by `writeImmediate()`, which the simulated board hands to `write()` and the real
+connection does not. The record now takes both.
+
+Not checked: nothing run on Windows or on the machine. That the jog is the cause is read from the
+owner's log of 19 Nov (the status `Jog` at the end of a spin-up, then `error:9` for the lines that
+waited) and the console of 22 Nov, not seen in a log of the 22 Nov case itself. What FluidNC
+answers to an empty line during a jog is not known; either answer is handled. The *WAIT* line
+rests on the record of written lines: if it stays on WAIT with the machine stopped, the record is
+off, and the traffic log (`# refused:` lines) will show it.
 
 ### 0.7.4 (on gSender 1.6.4)
 
@@ -997,6 +1078,25 @@ Sienci. Switches are in `src/app/src/gg-build.json`.
 `lib/gg/__tests__/`, `server/lib/gg/__tests__/`, `wizards/__tests__/gg-toolchange-z.test.ts`, and a
 block at the end of `features/Surfacing/tests/surfacing-output.test.ts`.
 
+## To check on the machine after installing 0.7.5
+
+Air cut, hand near the e-stop. Check 3 makes the machine move when you press *Send again* (the
+program's Z retract).
+
+1. Title bar shows `GGSender 0.7.5 (gSender 1.6.4)`.
+2. Run a job to a tool change and do not touch the pendant. The tool change window opens with
+   *WAIT. The machine is not ready. Do not jog.* while the spindle stops and Z goes up. After
+   that it says *The machine is ready. You can jog.* Jog now, let the jog end, then go on with the
+   window as usual.
+3. At the next tool change, jog from the FluidDial while the window says WAIT. A notice comes:
+   *The controller refused N lines*, with the lines (`G28 G91 Z0`, `G90`, `G4 P0.5`). No *Error 9*
+   window. When the machine is idle, press *Send again*: Z goes up, the notice goes away, the
+   window says ready. Do the tool change: it must end as usual and the job must go on.
+4. If a window stays on WAIT for more than 20 s with the machine stopped and no notice: stop, and
+   send the traffic log.
+5. Config, GGSender, *Send lines again after a jog at a tool change* off: a jog in the WAIT time
+   gives the *Error 9* windows of 0.7.4. Turn it on again.
+
 ## To check on the machine after installing 0.7.4
 
 1. Title bar shows `GGSender 0.7.4 (gSender 1.6.4)`.
@@ -1246,6 +1346,8 @@ Do these with the spindle off or as an air cut first.
 - Operations list: start the job from a chosen operation (needs the modal-state rebuild above).
   (0.7.2 shows one operation alone on a click.) Ideas, not asked for: a click on the tool row to
   show all operations of that tool; move the camera to the operation shown.
+- *Send again* for a job that runs: a jog in the spin-up wait after `M3` still holds the machine
+  and needs a stop and *Resume From* (see 0.7.5).
 - A link watchdog: no byte from the controller for a few seconds while gSender asks for status
   (the stall detector of 0.2.0 only fires when the machine reports Idle, and the traffic log does
   not record the port closing). Offered to the owner after a USB link that went mute mid-job

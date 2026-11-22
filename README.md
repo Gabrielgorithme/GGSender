@@ -68,6 +68,9 @@ that you select, and shows everything before anything moves.
 - **Pause is an immediate feed hold.** Upstream first runs what is in the controller's buffer.
 - While held, **stop and start the spindle** from the screen. Resume waits for the spin-up.
 - **The machine holds at the first error of a job.** Upstream keeps sending lines.
+- **A jog at a tool change does not cost the job.** The controller refuses the lines that wait
+  while it jogs. GGSender keeps them, shows them, and sends them again. The tool change window
+  says when the machine is ready for a jog.
 - **Feed and spindle overrides go back to 100% at each operation**, if you want that.
 
 ### Smaller things
@@ -171,7 +174,7 @@ program in the first picture.
 
 Each change is tested before it reaches a machine.
 
-- About **690 automated tests**. Everything that makes, filters or reads G-code has unit tests.
+- About **730 automated tests**. Everything that makes, filters or reads G-code has unit tests.
 - The **real controller code against a simulated board** that answers like Grbl, with a planner
   queue, a work offset and a tool sensor.
 - The **built app driven in a browser** against a fake FluidNC over TCP: a broken bit, the resume

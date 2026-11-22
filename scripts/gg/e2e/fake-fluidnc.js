@@ -20,6 +20,14 @@
 //   tool <length>   another tool is in the spindle
 //   wco <z>         write the Z offset directly
 //   state           only report
+//   jog <ms>        a jog from the pendant that lasts <ms>
+//
+// The spindle and the jog (0.7.5), as FluidNC 4.1 does them: with SPINDOWN_MS
+// set, "M5" waits that long for the spindle to stop and the status says Idle
+// all that time, with the lines after it still in the buffer. A jog is taken
+// in Idle, so also in that wait; it runs when the wait ends. While the
+// machine jogs the status says Jog and every G-code line is refused with
+// error:9 and "[MSG:ERR: GCode cannot be executed in lock or alarm state]".
 const net = require('net');
 const fs = require('fs');
 const PORT = Number(process.argv[2] || 2323);
@@ -32,7 +40,18 @@ const log = (o) => fs.appendFileSync(LOG, JSON.stringify({ t: Date.now(), ...o }
 // of the part's surface for a tool of length 0, the tool in the spindle
 const SENSOR = -70;
 const SURFACE = -55;
-const machine = { toolLength: 30, wcoZ: 0, wcoCounter: 0, pos: { x: 0, y: 0, z: 0 }, planned: { x: 0, y: 0, z: 0 } };
+const SPINDOWN_MS = Number(process.env.SPINDOWN_MS || 0);
+const machine = {
+    toolLength: 30, wcoZ: 0, wcoCounter: 0, pos: { x: 0, y: 0, z: 0 }, planned: { x: 0, y: 0, z: 0 },
+    delaying: false, // in the wait of "M5"
+    jogQueued: 0, // a jog taken during that wait (ms)
+    jogUntil: 0, // the machine jogs until this time
+};
+const jogging = () => Date.now() < machine.jogUntil;
+const startJog = (ms) => {
+    machine.jogUntil = Date.now() + ms;
+    log({ ev: 'jog', ms });
+};
 const setWco = (z, why) => {
     machine.wcoZ = z;
     // FluidNC 4.1 does not force a report: the change shows when the counter
@@ -66,7 +85,9 @@ net.createServer((sock) => {
     const send = (s) => { if (!sock.destroyed) sock.write(s + '\r\n'); };
     const status = () => {
         const busy = rx.some((l) => l && !l.startsWith('$')) || planner.length || executing || syncing;
-        const st = held ? 'Hold:0' : busy ? 'Run' : state;
+        let st = held ? 'Hold:0' : busy ? 'Run' : state;
+        if (machine.delaying) st = 'Idle'; // FluidNC shows Idle while it waits for the spindle
+        if (jogging()) st = 'Jog';
         let wco = '';
         if (machine.wcoCounter <= 0) {
             wco = `|WCO:0.000,0.000,${machine.wcoZ.toFixed(3)}`;
@@ -120,12 +141,42 @@ net.createServer((sock) => {
         while (rx.length) {
             if (syncing) return;
             const line = rx[0];
+            // no G-code during a jog, an empty line included
+            if (jogging() && !line.startsWith('$')) {
+                rx.shift();
+                log({ ev: 'refused', line });
+                send('error:9');
+                send('[MSG:ERR: GCode cannot be executed in lock or alarm state]');
+                continue;
+            }
             if (line === '') {
                 rx.shift();
                 send('ok');
                 continue;
             }
             const code = codeOf(line);
+            // the spindle stops: wait for the moves before it, then for the spindle
+            const spindleStop = SPINDOWN_MS > 0 && spindle && /M0*5(?![0-9])/.test(code);
+            if (spindleStop) {
+                if (planner.length || executing) return;
+                rx.shift();
+                log({ ev: 'line', line });
+                syncing = true;
+                machine.delaying = true;
+                setTimeout(() => {
+                    syncing = false;
+                    machine.delaying = false;
+                    spindle = false;
+                    // the jog taken during the wait runs now, before the lines that waited
+                    if (machine.jogQueued) {
+                        startJog(machine.jogQueued);
+                        machine.jogQueued = 0;
+                    }
+                    send('ok');
+                    parse();
+                }, SPINDOWN_MS);
+                return;
+            }
             const dwell = /G0*4(?![0-9])\s*P([\d.]+)/.exec(code);
             const probe = /G38\.2/.test(code);
             const g10 = /G10\s*L20\s*P0/.test(code);
@@ -231,6 +282,10 @@ net.createServer((sock) => {
                 setWco(machine.pos.z, 'pendant zero');
             }
             if (cmd === 'wco') setWco(Number(arg), 'pendant');
+            if (cmd === 'jog') {
+                if (machine.delaying) machine.jogQueued = Number(arg) || 500;
+                else startJog(Number(arg) || 500);
+            }
             log({ ev: 'pendant', cmd, arg, ...machineState() });
             sock.write(JSON.stringify(machineState()) + '\n');
         }

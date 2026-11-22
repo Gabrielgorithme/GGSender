@@ -47,6 +47,7 @@ import semiautoToolChange from 'app/wizards/semiautoToolchange';
 // GGSender: the Fixed Tool Sensor wizard follows the tool sensor reference
 import { FIXED_SENSOR_TITLE, chooseFixedSensorWizard } from 'app/features/gg/toolChangeFlow';
 import { pushLoadedTool, setReference, watchLoadedTool } from 'app/lib/gg/probeStore';
+import { setRefused, setSettled } from 'app/lib/gg/refusedStore'; // GGSender
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
 // TODO: add worker types
 // @ts-ignore
@@ -686,6 +687,8 @@ export function* initialize(): Generator<any, void, any> {
             reduxStore.dispatch(resetHoming());
             setHomed(null); // GGSender
             setReference(null); // GGSender: the reference is not kept across a reconnection
+            setRefused(null); // GGSender
+            setSettled(null); // GGSender
             noteJobOver(ggStopWhere); // GGSender: a job cut off by the disconnection
             reduxStore.dispatch(closeConnection());
 
@@ -1026,6 +1029,10 @@ export function* initialize(): Generator<any, void, any> {
     controller.addListener('gg:probe:state', (state: unknown) => {
         setReference(state);
     });
+
+    // GGSender: lines refused during a jog, and whether the machine is ready (lib/gg/refusedStore)
+    controller.addListener('gg:refused:state', (state: unknown) => setRefused(state));
+    controller.addListener('gg:settled', (value: unknown) => setSettled(value));
 
     // GGSender: homed as the controller reports it (pre-flight only)
     controller.addListener('gg:homed', (state: unknown) => setHomed(state));

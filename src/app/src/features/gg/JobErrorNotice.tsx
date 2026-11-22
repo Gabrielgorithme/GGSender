@@ -38,6 +38,11 @@ export const jobErrorText = (report: JobErrorReport, content: string) => {
         where: where || 'line not known',
         line: report.line,
         message: report.message,
+        // error 9 is not a fault of the line: the machine could not take it
+        cause:
+            report.code === 9
+                ? 'The machine was in a jog or in an alarm when this line came. Do not jog while the spindle starts or stops: the controller shows Idle then, but lines wait.'
+                : '',
         advice: report.held
             ? 'WARNING: Stop the job. Do not resume it. The machine is on hold, and the lines after this line did not run. If you resume, these lines start from an incorrect position and can cut into the part. Correct the cause, then use Resume From.'
             : 'The job is paused. But the controller runs the lines that it has after this line.',
@@ -54,6 +59,7 @@ export const showJobError = (report: JobErrorReport, content: string) => {
                     <b>{t.where}</b>: <code className="font-mono">{t.line}</code>
                 </p>
                 {t.message && <p className="text-sm">{t.message}</p>}
+                {t.cause && <p className="text-sm" data-testid="gg-job-error-cause">{t.cause}</p>}
                 <p className={report.held ? 'font-semibold text-red-600 dark:text-red-400' : ''}>{t.advice}</p>
             </div>
         ),

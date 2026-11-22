@@ -295,6 +295,15 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         onUpdate: () => pushHoldSettings(),
                     },
                     {
+                        label: 'Send lines again after a jog at a tool change',
+                        key: 'workspace.gg.jogRecovery',
+                        type: 'boolean',
+                        defaultValue: true,
+                        description:
+                            'GGSender: the controller accepts no program line while the machine jogs. If you jog from a pendant while the spindle stops for a tool change, the controller refuses the lines that wait. gSender keeps these lines and shows them. Press "Send again" to send them, and the tool change continues. Lines that only wait go again without a button. Off: upstream gSender, which shows an error for each line; you must then stop the job.',
+                        onUpdate: () => pushHoldSettings(),
+                    },
+                    {
                         label: 'Reset overrides at each operation',
                         key: 'workspace.gg.resetOverridesPerOp',
                         type: 'boolean',
